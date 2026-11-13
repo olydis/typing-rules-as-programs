@@ -72,6 +72,7 @@ In build order, with the part of the paper each supports:
 | `specialise_equal.v` | Towards Typed Tooling: specialising equality, sizes |
 | `typed_mu.v` | Typed partial recursion on numbers |
 | `nat_search.v` | Introduction (Figure 1) and Updates: `nat_search` |
+| `values.v` | Support: the core on values and application; expressions derived. Not described in the paper |
 | `Assumptions.v` | `Print Assumptions` for every Theorem |
 
 ## Theorems of the paper

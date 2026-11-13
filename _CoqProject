@@ -57,6 +57,8 @@ specialise_equal.v
 typed_mu.v
 # Introduction (Figure 1) and Updates: the search operator nat_search.
 nat_search.v
+# Support: the core on values and application; expressions derived.
+values.v
 
 # Assumptions check for every Theorem (prints only).
 Assumptions.v

@@ -3,7 +3,7 @@
     Each [Print Assumptions] below should report
     "Closed under the global context": no axiom, no admitted proof. *)
 
-From TreeTyping Require tree typing soundness families booleans TreeTyping functions data_types arrays array_traversals matrices recursion search conditionals queries updates dither_minimisation paper_ontology self_typing customisation patching optimisation steps divergence specialise_equal typed_mu nat_search.
+From TreeTyping Require tree typing soundness families booleans TreeTyping functions data_types arrays array_traversals matrices recursion search conditionals queries updates dither_minimisation paper_ontology self_typing customisation patching optimisation steps divergence specialise_equal typed_mu nat_search values.
 
 Print Assumptions TreeTyping.tree.eval_deterministic.
 Print Assumptions TreeTyping.soundness.function_abstractor_sound.
@@ -71,3 +71,10 @@ Print Assumptions TreeTyping.typed_mu.typed_mu_complete.
 Print Assumptions TreeTyping.typed_mu.typed_mu_values_are_numbers.
 Print Assumptions TreeTyping.nat_search.nat_search_polymorphic.
 Print Assumptions TreeTyping.nat_search.nat_search_is_odd.
+Print Assumptions TreeTyping.values.applies_deterministic.
+Print Assumptions TreeTyping.values.application_preserves_typing.
+Print Assumptions TreeTyping.values.application_preserves_typing_by_typing.
+Print Assumptions TreeTyping.values.eval_iff_run.
+Print Assumptions TreeTyping.values.expression_typing_by_applications.
+Print Assumptions TreeTyping.values.ontology_sound_iff.
+Print Assumptions TreeTyping.values.paper_application_preserves_typing.
