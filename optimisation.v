@@ -1422,60 +1422,8 @@ Qed.
 
 (** ** Behaviour on small arguments (bonus)
 
-    A certified fuel evaluator.  Fuel exhaustion proves nothing; successful runs become evaluation
-    derivations by [run_sound]. *)
-
-Fixpoint run (fuel : nat) (f u : Combination) : option Combination :=
-  match fuel with
-  | O => None
-  | S k =>
-    match f with
-    | Lf => Some (Sm u)
-    | Sm x => Some (Fk x u)
-    | Fk Lf x => Some x
-    | Fk (Sm g) h =>
-      match run k g u, run k h u with
-      | Some a, Some b => run k a b
-      | _, _ => None
-      end
-    | Fk (Fk a b) c =>
-      match u with
-      | Lf => Some a
-      | Sm x => run k b x
-      | Fk x y => match run k c x with Some d => run k d y | None => None end
-      end
-    end
-  end.
-
-Lemma run_sound : forall fuel f u v,
-  run fuel f u = Some v -> f @ u ==> v.
-Proof.
-  induction fuel as [|fuel IH]; intros f u v H; [discriminate|].
-  destruct f as [|a|a b]; cbn in H.
-  - inversion H; constructor.
-  - inversion H; constructor.
-  - destruct a as [|a|a c].
-    + inversion H; constructor.
-    + destruct (run fuel a u) eqn:HA; [|discriminate].
-      destruct (run fuel b u) eqn:HB; [|discriminate].
-      eapply eval_s; eapply IH; eassumption.
-    + destruct u as [|x|x y].
-      * inversion H; constructor.
-      * apply eval_stem; eapply IH; exact H.
-      * destruct (run fuel b x) eqn:HB; [|discriminate].
-        apply eval_fork; eapply eval_appl; eapply IH; eassumption.
-Qed.
-
-Definition run2 fuel f x y :=
-  match run fuel f x with Some g => run fuel g y | None => None end.
-
-Lemma run2_sound : forall fuel f x y v,
-  run2 fuel f x y = Some v -> f @ x @r y ==> v.
-Proof.
-  intros fuel f x y v H; unfold run2 in H.
-  destruct (run fuel f x) eqn:HG; [|discriminate].
-  eapply eval_appl; eapply run_sound; eassumption.
-Qed.
+    Computed by the bounded evaluator [eval_bounded]: successful runs become
+    evaluation derivations by [eval_bounded_sound]. *)
 
 Definition one := succ zero.
 Definition two := succ one.
@@ -1489,7 +1437,7 @@ Lemma erased_addition_values :
   (erased_addition @ two @r three ==> five /\ addition @ two @r three ==> five) /\
   (erased_addition @ three @r two ==> five /\ addition @ three @r two ==> five).
 Proof.
-  repeat split; apply (run2_sound 200); vm_compute; reflexivity.
+  repeat split; apply (eval_bounded_sound 200); vm_compute; reflexivity.
 Qed.
 
 (** * Stage 3: the general question *)
@@ -1922,7 +1870,7 @@ Lemma chain_head_erase_values :
   lam (head_erase (chain typed_neg 2)) 'tt @ 'tt ==> 'tt /\
   lam (chain typed_neg 3) 'tt @ 'tt ==> 'ff /\
   lam (head_erase (chain typed_neg 3)) 'tt @ 'tt ==> 'ff.
-Proof. repeat split; apply (run_sound 200); vm_compute; reflexivity. Qed.
+Proof. repeat split; apply (eval_bounded_sound 200); vm_compute; reflexivity. Qed.
 
 (** * Assumptions *)
 

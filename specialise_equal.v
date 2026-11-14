@@ -566,7 +566,7 @@ Definition supports_base AI : Prop :=
   supports_salary AI /\ supports_employee AI /\ supports_department AI /\
   supports_is_named AI /\ supports_seek AI.
 
-Local Ltac lookup := eapply run_sound with (fuel := 1000); vm_compute; reflexivity.
+Local Ltac lookup := apply (eval_bounded_sound 1000); vm_compute; reflexivity.
 
 Lemma specialised_row : specialised_ontology @ fun_nm ==> function_abstractor.
 Proof. lookup. Qed.
@@ -619,7 +619,7 @@ Qed.
 Definition run_fuel := 1000 * 1000.
 
 Definition same_result (fuel : nat) (A B x : Combination) : bool :=
-  match optimisation.run fuel (infer A) x, optimisation.run fuel (infer B) x with
+  match eval_bounded fuel (infer A @ x), eval_bounded fuel (infer B @ x) with
   | Some (Sm T), Some (Sm T') => ceqb T T'
   | _, _ => false
   end.
@@ -628,10 +628,10 @@ Lemma same_result_sound : forall fuel A B x, same_result fuel A B x = true ->
   exists T, infer A @ x ==> Sm T /\ infer B @ x ==> Sm T.
 Proof.
   intros fuel A B x H; unfold same_result in H.
-  destruct (optimisation.run fuel (infer A) x) as [[|T|]|] eqn:E1; try discriminate.
-  destruct (optimisation.run fuel (infer B) x) as [[|T'|]|] eqn:E2; try discriminate.
+  destruct (eval_bounded fuel (infer A @ x)) as [[|T|]|] eqn:E1; try discriminate.
+  destruct (eval_bounded fuel (infer B @ x)) as [[|T'|]|] eqn:E2; try discriminate.
   apply ceqb_true in H; subst T'.
-  exists T; split; eapply run_sound; eassumption.
+  exists T; split; eapply eval_bounded_sound; eassumption.
 Qed.
 
 Lemma infer_unchanged_examples :
