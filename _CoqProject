@@ -43,7 +43,7 @@ paper_ontology.v
 self_typing.v
 # Queries and Updates: querying a department, raising salaries.
 customisation.v
-# Patching a query program; Towards Typed Tooling: patching expressions.
+# Patching a query program; Towards Typed Tooling: patching pending applications.
 patching.v
 # Towards Typed Tooling: typed optimisation.
 optimisation.v

@@ -55,7 +55,7 @@ Proof. intros; unfold tagged_update; evaluate. Qed.
 Lemma update_eliminator_inv : forall a U V,
   update_eliminator @ a @r U ==> Sm V -> V = U.
 Proof.
-  intros a U V H; pose proof (eval_deterministic _ _ H _ (update_eliminator_eval a U)) as HE.
+  intros a U V H; pose proof (applied_deterministic _ _ _ H _ (update_eliminator_eval a U)) as HE.
   inversion HE; reflexivity.
 Qed.
 Lemma type_app_Update : forall AI U,
@@ -66,11 +66,11 @@ Proof. intros; apply type_app_abstract; apply update_eliminator_eval. Qed.
     unlike an unspecialised comparison, it does not store Update as data. *)
 Local Ltac update_check_eval :=
   first [eassumption |
-    match goal with |- ('I @ ?x) @r ?y ==> _ => eapply eval_appl; [apply I_eval | update_check_eval] end |
+    match goal with |- 'I @ ?x @r ?y ==> _ => eapply eval_appl; [apply I_eval | update_check_eval] end |
     (apply wait_eval; update_check_eval) | apply equal_eval | apply equal1_eq |
     evaluate_expr_core update_check_eval update_check_head | idtac]
 with update_check_head := first [eassumption |
-    match goal with |- ('I @ ?x) @r ?y ==> _ => eapply eval_appl; [apply I_eval | update_check_eval] end |
+    match goal with |- 'I @ ?x @r ?y ==> _ => eapply eval_appl; [apply I_eval | update_check_eval] end |
     (apply wait_eval; update_check_eval) | apply equal_eval | apply equal1_eq |
     evaluate_head_core update_check_eval | idtac].
 
@@ -92,9 +92,11 @@ Lemma get_update_composition_inv : forall X B,
 Proof.
   intros X B H; unfold get_update_composition, get_update_composition_fields in H;
     cbn in H; invert_eval.
-  assert (Heq : equal @ v22 @r tagged_update ==> v0)
-    by (eapply eval_appl; eauto).
-  destruct (equal_spec _ _ _ Heq) as [[-> HE] | [-> HE]]; invert_eval.
+  match goal with
+  | H1 : equal @ ?r ==> ?w, H2 : ?w @ tagged_update ==> ?res |- _ =>
+      assert (Heq : equal @ r @r tagged_update ==> res) by (eapply eval_appl; eauto);
+      destruct (equal_spec _ _ _ Heq) as [[-> HE] | [-> HE]]; invert_eval
+  end.
   eapply get_composition_inv; eassumption.
 Qed.
 Local Opaque get_update_composition.
@@ -133,15 +135,15 @@ Lemma update_identity_case_inv : forall C k,
 Proof.
   intros C k H.
   destruct (combination_eq_dec C ('I)) as [->|HN].
-  - pose proof (eval_deterministic _ _ H _ update_identity_case_some) as H0; inversion H0; auto.
-  - pose proof (eval_deterministic _ _ H _ (update_identity_case_none C HN)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ update_identity_case_some) as H0; inversion H0; auto.
+  - pose proof (eval_deterministic _ _ _ H _ (update_identity_case_none C HN)); discriminate.
 Qed.
 Lemma update_identity_case_never_fork : forall C l r,
   update_identity_case @ C ==> Fk l r -> False.
 Proof.
   intros C l r H; destruct (combination_eq_dec C ('I)) as [->|HN].
-  - pose proof (eval_deterministic _ _ H _ update_identity_case_some); discriminate.
-  - pose proof (eval_deterministic _ _ H _ (update_identity_case_none C HN)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ update_identity_case_some); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (update_identity_case_none C HN)); discriminate.
 Qed.
 
 
@@ -167,8 +169,8 @@ Lemma eq_built_inv : forall b r t C s, (forall C, b @ C ==> t) ->
   eq_built b r @ C ==> Sm s -> C = t /\ s = r.
 Proof.
   intros b r t C s Hb H; destruct (combination_eq_dec C t) as [->|Hne].
-  - pose proof (eval_deterministic _ _ H _ (eq_built_hit b r t Hb)) as HE; inversion HE; auto.
-  - pose proof (eval_deterministic _ _ H _ (eq_built_miss b r t C Hb Hne)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (eq_built_hit b r t Hb)) as HE; inversion HE; auto.
+  - pose proof (eval_deterministic _ _ _ H _ (eq_built_miss b r t C Hb Hne)); discriminate.
 Qed.
 
 Lemma get_IfNamed_Z_none : forall f, get_IfNamed @ Z f ==> Lf.
@@ -200,7 +202,7 @@ Proof.
   pose proof (update_type_mk_eval (Z (T 'C tagged_update))) as H2.
   pose proof (equal_eval (Sm ('Update))).
   pose proof (equal1_eq (Sm ('Update))).
-  destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ _ HA) as [w [Hw Hw2]].
   unfold update_recursive_constructor; eexists; split; evaluate.
 Qed.
 Lemma update_recursive_constructor_inv : forall C k a E,
@@ -210,7 +212,7 @@ Lemma update_recursive_constructor_inv : forall C k a E,
 Proof.
   intros C k a E H Ha; unfold update_recursive_constructor in H; invert_eval.
   match goal with Hg : update_type_mk @ _ ==> _ |- _ =>
-    pose proof (eval_deterministic _ _ Hg _ (update_type_mk_eval C)) as HU; subst end.
+    pose proof (eval_deterministic _ _ _ Hg _ (update_type_mk_eval C)) as HU; subst end.
   match goal with Hg : get_recursive_update @ C ==> Sm ?T |- _ =>
     apply get_recursive_update_inv in Hg; subst C end.
   match goal with
@@ -219,7 +221,7 @@ Proof.
     destruct (equal_spec _ _ _ HE) as [[HB HU]|[HB HU]];
     subst b; invert_eval
   end.
-  repeat eexists; eapply eval_appl; eassumption.
+  eexists; split; [reflexivity|split; [eexists; split; eassumption|reflexivity]].
 Qed.
 Lemma update_recursive_constructor_never_fork : forall C l r,
   update_recursive_constructor @ C ==> Fk l r -> False.
@@ -280,7 +282,7 @@ Proof.
  pose proof (proj2 (is_concrete_true N) HN).
  pose proof (get_wrap_payload_type_some AI N T HI).
  pose proof (equal1_eq (Sm (wrap_type T N))).
- destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+ destruct (eval_appl_inv _ _ _ _ HA) as [w [Hw Hw2]].
  unfold update_choice_constructor; unfold wrap_type, wrap_eliminator in *.
  eexists; split; run.
 Qed.
@@ -294,7 +296,7 @@ Proof.
  all: repeat progress recognizer_eqtac.
  all: match goal with Hc : is_concrete @ ?N ==> ?b |- _ =>
   pose proof (is_concrete_spec N) as HC;
-  pose proof (eval_deterministic _ _ Hc _ HC) as HB;
+  pose proof (eval_deterministic _ _ _ Hc _ HC) as HB;
   destruct (concreteb N) eqn:HN; cbn in HB; subst b; invert_eval end.
  all: repeat progress recognizer_eqtac.
  all: repeat match goal with
@@ -341,15 +343,15 @@ Lemma children_constructor_inv : forall C k,
  C = update_one_level ('Update) /\ k = update_done.
 Proof.
  intros C k H; destruct (combination_eq_dec C (update_one_level ('Update))) as [->|HN].
- - pose proof (eval_deterministic _ _ H _ children_constructor_some) as H0; inversion H0; auto.
- - pose proof (eval_deterministic _ _ H _ (children_constructor_none C HN)); discriminate.
+ - pose proof (eval_deterministic _ _ _ H _ children_constructor_some) as H0; inversion H0; auto.
+ - pose proof (eval_deterministic _ _ _ H _ (children_constructor_none C HN)); discriminate.
 Qed.
 Lemma children_constructor_never_fork : forall C l r,
  children_constructor_case @ C ==> Fk l r -> False.
 Proof.
  intros C l r H; destruct (combination_eq_dec C (update_one_level ('Update))) as [->|HN].
- - pose proof (eval_deterministic _ _ H _ children_constructor_some); discriminate.
- - pose proof (eval_deterministic _ _ H _ (children_constructor_none C HN)); discriminate.
+ - pose proof (eval_deterministic _ _ _ H _ children_constructor_some); discriminate.
+ - pose proof (eval_deterministic _ _ _ H _ (children_constructor_none C HN)); discriminate.
 Qed.
 (** Query-selected update: [query_update q @ u = (q @ u) @ u]. A query of
     type [Query[Update]] inspects the argument and selects the update to
@@ -377,15 +379,15 @@ Lemma query_update_case_inv : forall C k,
  C = query_update_type /\ k = update_done.
 Proof.
  intros C k H; destruct (combination_eq_dec C query_update_type) as [->|HN].
- - pose proof (eval_deterministic _ _ H _ query_update_case_some) as H0; inversion H0; auto.
- - pose proof (eval_deterministic _ _ H _ (query_update_case_none C HN)); discriminate.
+ - pose proof (eval_deterministic _ _ _ H _ query_update_case_some) as H0; inversion H0; auto.
+ - pose proof (eval_deterministic _ _ _ H _ (query_update_case_none C HN)); discriminate.
 Qed.
 Lemma query_update_case_never_fork : forall C l r,
  query_update_case @ C ==> Fk l r -> False.
 Proof.
  intros C l r H; destruct (combination_eq_dec C query_update_type) as [->|HN].
- - pose proof (eval_deterministic _ _ H _ query_update_case_some); discriminate.
- - pose proof (eval_deterministic _ _ H _ (query_update_case_none C HN)); discriminate.
+ - pose proof (eval_deterministic _ _ _ H _ query_update_case_some); discriminate.
+ - pose proof (eval_deterministic _ _ _ H _ (query_update_case_none C HN)); discriminate.
 Qed.
 Lemma app_query_update : forall AI U,
  app AI @ query_update_type @r U ==> Sm U.
@@ -450,7 +452,7 @@ Proof.
  apply extend_none; [apply children_constructor_none;discriminate|].
  apply extend_none.
  - assert (HG : get_IfNamed @ query_update_type ==> Lf).
-   { apply (eval_bounded_sound 2000); vm_compute; reflexivity. }
+   { compute_eval 2000. }
    apply update_choice_constructor_none; exact HG.
  - eapply clause_hit; [apply query_update_case_some|apply update_done_eval].
 Qed.
@@ -482,8 +484,8 @@ Lemma update_abstractor_applied : forall AI C v,
  update_abstractor_at AI @ C ==> v.
 Proof.
  intros AI C v HS H; destruct (declaration_apply_inv _ _ _ _ _ H) as [R [D [HR [HD Hv]]]].
- pose proof (eval_deterministic _ _ HR _ HS) as ->.
- pose proof (eval_deterministic _ _ HD _ (update_abstractor_partial AI)) as ->; exact Hv.
+ pose proof (eval_deterministic _ _ _ HR _ HS) as ->.
+ pose proof (eval_deterministic _ _ _ HD _ (update_abstractor_partial AI)) as ->; exact Hv.
 Qed.
 Lemma app_tagged_update : forall AI C E,
  supports AI -> update_abstractor_at AI @ C ==> Sm E ->
@@ -506,16 +508,16 @@ Proof.
  intros AI C X HC; apply abstractor_at_eval_inv in HC; unfold update_core in HC.
  destruct (clause_inv _ _ _ _ _ (update_identity_case_never_fork _) HC) as [[k [Hk Ha]]|[_ H1]].
  { destruct (update_identity_case_inv _ _ Hk) as [-> ->].
-   pose proof (eval_deterministic _ _ Ha _ (update_done_eval _)) as HE; inversion HE; auto. }
+   pose proof (eval_deterministic _ _ _ Ha _ (update_done_eval _)) as HE; inversion HE; auto. }
  destruct (clause_inv _ _ _ _ _ (children_constructor_never_fork _) H1) as [[k [Hk Ha]]|[_ H2]].
  { destruct (children_constructor_inv _ _ Hk) as [-> ->].
-   pose proof (eval_deterministic _ _ Ha _ (update_done_eval _)) as HE; inversion HE; auto. }
+   pose proof (eval_deterministic _ _ _ Ha _ (update_done_eval _)) as HE; inversion HE; auto. }
  destruct (clause_inv _ _ _ _ _ (update_choice_constructor_never_fork _ _) H2) as [[k [Hk Ha]]|[_ H3]].
  { destruct (update_choice_constructor_inv _ _ _ _ _ Hk Ha) as [N [T [F [-> [HN [HI [HF ->]]]]]]].
    split; [reflexivity|right; right; left; exists N, T, F; auto]. }
  destruct (clause_inv _ _ _ _ _ (query_update_case_never_fork _) H3) as [[k [Hk Ha]]|[_ H4]].
  { destruct (query_update_case_inv _ _ Hk) as [-> ->].
-   pose proof (eval_deterministic _ _ Ha _ (update_done_eval _)) as HE; inversion HE; auto 6. }
+   pose proof (eval_deterministic _ _ _ Ha _ (update_done_eval _)) as HE; inversion HE; auto 6. }
  destruct (clause_inv _ _ _ _ _ (update_recursive_constructor_never_fork _) H4) as [[k [Hk Ha]]|[_ H5]].
  { destruct (update_recursive_constructor_inv _ _ _ _ Hk Ha) as [T [-> [HT ->]]].
    split; [reflexivity|right; right; right; right; eauto]. }
@@ -683,7 +685,7 @@ Lemma update_unfold : forall N f u v,
 Proof.
  intros N f u v H; unfold update, fix_update at 1; apply tagged_eval; apply Z_unfold.
  eapply eval_appl; [|exact H].
- eapply eval_c; eapply eval_appr;
+ eapply eval_c;
  [apply tagged_update_eval|apply body_eval].
 Qed.
 Lemma update_hit : forall N f p v,
@@ -791,10 +793,9 @@ Theorem abstract_update_preserves_typing : forall AI u x U y,
   u @ x ==> y -> infer AI @ y ==> Sm U.
 Proof.
   intros AI u x U y HS Hu Hx HE.
-  eapply evaluation_preserves_typing; eauto.
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; exact Hu.
-  - apply infer_expression_stem; exact Hx.
+  eapply (evaluation_preserves_typing _ _ _ _ _ _ _ HS HE).
+  - exact Hu.
+  - exact Hx.
   - apply type_app_Update.
 Qed.
 
@@ -910,7 +911,7 @@ Lemma generic_ontology_inv : forall base N C,
 Proof.
   intros base N C H; unfold generic_ontology in H; apply Z_unfold_inv in H; inv_out H.
   match goal with HB : generic_ontology_body base @ Z (generic_ontology_body base) ==> ?b |- _ =>
-    pose proof (eval_deterministic _ _ HB _ (generic_ontology_body_eval base _)) as HE;
+    pose proof (eval_deterministic _ _ _ HB _ (generic_ontology_body_eval base _)) as HE;
     subst b end.
   assumption.
 Qed.
@@ -1286,7 +1287,7 @@ Proof.
   intros f u v H; inv_out H.
   unfold fix_query at 1; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|eassumption].
-  eapply eval_c; eapply eval_appr.
+  eapply eval_c.
   - unfold tagged_query; evaluate.
   - eassumption.
 Qed.
@@ -1756,7 +1757,7 @@ Lemma ghost_guarded_unfold : forall N f u v,
 Proof.
   intros N f u v H; unfold ghost_guarded_update at 1, fix_update; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|exact H].
-  eapply eval_c; eapply eval_appr; [apply tagged_update_eval|].
+  eapply eval_c; [apply tagged_update_eval|].
   apply ghost_guarded_body_eval.
 Qed.
 Definition off_list u := pattern_matches list_pat u = false.

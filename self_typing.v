@@ -33,11 +33,11 @@ Qed.
 (** The identity is implicitly polymorphic: it applies at every type. *)
 Theorem identity_polymorphic : forall AI u U,
   infer AI @ u ==> Sm U ->
-  infer_expression AI @ ('I @ u) ==> Sm U.
+  has_type AI 'I [u] U.
 Proof.
-  intros AI u U Hu; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_I.
-  - apply infer_expression_stem; exact Hu.
+  intros AI u U Hu; has_type_intro.
+  - apply infer_I.
+  - exact Hu.
   - apply type_app_I.
 Qed.
 
@@ -251,12 +251,6 @@ Lemma infer_concrete : forall AI,
 Proof.
   intros AI H; unfold infer; apply Z_preserves_concrete; lf_ai AI H.
 Qed.
-Lemma infer_expression_concrete : forall AI,
-  concrete AI -> concrete (infer_expression AI).
-Proof.
-  intros AI H; unfold infer_expression; apply Z_preserves_concrete; lf_ai AI H.
-Qed.
-
 Lemma type_app_all_concrete : concrete (type_app paper_ontology).
 Proof.
   apply type_app_concrete;
@@ -267,22 +261,13 @@ Proof.
   apply infer_concrete;
     apply paper_ontology_concrete.
 Qed.
-Lemma infer_expression_all_concrete :
-  concrete (infer_expression paper_ontology).
-Proof.
-  apply infer_expression_concrete;
-    apply paper_ontology_concrete.
-Qed.
-
 (** The typing programs of the combined declarations are concrete. *)
 Lemma all_typing_concrete :
   concrete paper_ontology /\ concrete (type_app paper_ontology) /\
-  concrete (infer paper_ontology) /\
-  concrete (infer_expression paper_ontology).
+  concrete (infer paper_ontology).
 Proof.
   (* Not [repeat split]: it would unfold [concrete] on the trees. *)
-  exact (conj paper_ontology_concrete (conj type_app_all_concrete
-    (conj infer_all_concrete infer_expression_all_concrete))).
+  exact (conj paper_ontology_concrete (conj type_app_all_concrete infer_all_concrete)).
 Qed.
 End Concreteness.
 
@@ -307,10 +292,10 @@ Lemma cdither_concrete : concrete cdither.
 Proof. apply Z_preserves_concrete; apply concreteb_sound; vm_compute; reflexivity. Qed.
 
 Lemma compose_evaln_inv : forall n g f x v,
-  evaln n ((g 'C f) @ x) v -> exists m w, m < n /\ evaln m (f @ x) w.
+  evaln n (g 'C f) x v -> exists m w, m < n /\ evaln m f x w.
 Proof.
   intros n g f x v H; invert_evaln.
-  match goal with H : evaln ?m (f @ x) ?w |- _ => exists m, w; split; [lia|exact H] end.
+  match goal with H : evaln ?m f x ?w |- _ => exists m, w; split; [lia|exact H] end.
 Qed.
 
 Lemma cdither_step : cdither_body @ cdither ==> cneg 'C cdither.
@@ -319,12 +304,12 @@ Proof. unfold cdither_body; cbn; d_eval. Qed.
 Lemma cdither_no_value : forall x v, ~ (cdither @ x ==> v).
 Proof.
   intros x v H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evaln _ _ _ H) as [n Hn]; clear H.
   revert v Hn.
   induction n as [n IH] using lt_wf_ind; intros v Hn.
   unfold cdither at 1 in Hn.
   destruct (Z_evaln_unfold_inv _ _ _ _ Hn) as [m2 [w [Hm2 [Hw H2]]]].
-  pose proof (eval_deterministic _ _ Hw _ cdither_step) as Heq; subst w.
+  pose proof (eval_deterministic _ _ _ Hw _ cdither_step) as Heq; subst w.
   destruct (compose_evaln_inv _ _ _ _ _ H2) as [m3 [w [Hm3 H3]]].
   exact (IH m3 ltac:(lia) w H3).
 Qed.

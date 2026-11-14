@@ -345,7 +345,7 @@ Lemma min_tprog_eval : forall F T n,
   minimisation @ 'wait[min_pred F, T] @r seek_at zero ==> seek_at n ->
   min_tprog F @ T ==> n.
 Proof.
-  intros F T n H; destruct (eval_pair_inv _ _ _ H) as [w [c [Hw [Hc Hv]]]]; inv_out Hc.
+  intros F T n H; destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
   pose proof (seek_zero_eval T); pose proof (seek_at_unwrap n).
   unfold min_tprog; d_eval.
 Qed.
@@ -506,10 +506,10 @@ Theorem typed_mu_values_are_numbers : forall k (f : mu_fun (S k)) xs v,
   length xs = S k -> tcompile f @ tuple_of (map numeral xs) ==> v ->
   infer paper_ontology @ v ==> Sm ('Nat).
 Proof.
-  intros k f xs v Hl He; eapply paper_evaluation_preserves_typing; [exact He|].
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_tcompile.
-  - apply infer_expression_stem; apply infer_tup;
+  intros k f xs v Hl He.
+  eapply (paper_evaluation_preserves_typing _ _ _ _ _ _ He).
+  - apply infer_tcompile.
+  - apply infer_tup;
       [apply paper_ontology_supports_number|exact Hl].
   - apply type_app_tcompile;
       [apply paper_ontology_supports_seek|apply paper_ontology_supports_updates

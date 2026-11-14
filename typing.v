@@ -4,7 +4,7 @@
     - clause notation for writing the typing programs;
     - the hardwired auxiliary programs;
     - type application [type_app];
-    - inference of value types and of expression types;
+    - inference of value types, and the typing of applications;
     - the paper's type-application figure, type application clause by clause. *)
 
 
@@ -259,7 +259,7 @@ Lemma ignores_wait_eval : forall e X a U v,
   e @ X @r U ==> v -> 'wait[ignores e, X] @ a @r U ==> v.
 Proof.
   intros e X a U v H.
-  destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hv]]]]; inv_out Hu.
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
   eapply eval_appl; [apply wait_eval; unfold ignores; repeat first [eassumption | progress evaluate]|exact Hv].
 Qed.
 
@@ -267,7 +267,7 @@ Lemma ignores_wait_inv : forall e X a U v,
   'wait[ignores e, X] @ a @r U ==> v -> e @ X @r U ==> v.
 Proof.
   intros e X a U v H.
-  destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hv]]]]; inv_out Hu.
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
   apply wait_eval_inv in Hw; unfold ignores in Hw; invert_eval.
   eapply eval_appl; eassumption.
 Qed.
@@ -396,7 +396,7 @@ Lemma tagged_by_inv : forall N a U V,
 Proof.
   intros N a U V H.
   destruct (name_test_total N U) as [b Hb].
-  pose proof (eval_deterministic _ _ H _ (tagged_by_eval N a _ _ Hb)) as HE.
+  pose proof (applied_deterministic _ _ _ H _ (tagged_by_eval N a _ _ Hb)) as HE.
   inversion HE; subst; exact Hb.
 Qed.
 Lemma is_named_eval : forall n u b,
@@ -451,7 +451,7 @@ Lemma path_eval : forall ds t, path_prog ds @ t ==> path_fn ds t.
 Proof.
   induction ds as [|d ds IH]; intro t; cbn [path_prog path_fn].
   - apply I_eval.
-  - apply eval_c; eapply eval_arg_value; [apply dir_eval | apply IH].
+  - eapply eval_c; [apply dir_eval | apply IH].
 Qed.
 
 
@@ -517,11 +517,7 @@ Proof.
 Qed.
 
 Local Ltac acc_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first [ eassumption | apply equal_eval | apply acc_arg_eval | apply acc_pB_eval ]
-  end.
+  closed_eval_goal; first [ eassumption | apply equal_eval | apply acc_arg_eval | apply acc_pB_eval ].
 Local Ltac acc_eval :=
   first [ acc_atom | evaluate_expr_core acc_eval acc_head | idtac ]
 with acc_head :=
@@ -636,7 +632,7 @@ Definition function_abstractor := Eval cbn -[function_abstractor_core] in
 Lemma function_abstractor_eval : forall a C v,
   function_abstractor_core @ C @r a ==> v -> function_abstractor @ a @r C ==> v.
 Proof.
-  intros a C v H; destruct (eval_pair_inv _ _ _ H) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  intros a C v H; destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hw2]].
   unfold function_abstractor; repeat first [eassumption | progress evaluate].
 Qed.
 
@@ -668,17 +664,17 @@ Lemma declaration_K1_inv : forall AI N D a C v,
   AI @ N ==> ('K1 D) -> AI @ N @r a @r C ==> v -> D @ C ==> v.
 Proof.
   intros AI N D a C v HD H.
-  destruct (eval_pair_inv _ _ _ H) as [D' [c [HD' [Hc Hv]]]]; inv_out Hc.
-  destruct (eval_pair_inv _ _ _ HD') as [R [c' [HR [Hc' Ha]]]]; inv_out Hc'.
-  pose proof (eval_deterministic _ _ HR _ HD) as ->.
-  pose proof (eval_deterministic _ _ Ha _ (eval_k _ _)) as ->; exact Hv.
+  destruct (eval_appl_inv _ _ _ _ H) as [D' [HD' Hv]].
+  destruct (eval_appl_inv _ _ _ _ HD') as [R [HR Ha]].
+  pose proof (eval_deterministic _ _ _ HR _ HD) as ->.
+  pose proof (eval_deterministic _ _ _ Ha _ (eval_k _ _)) as ->; exact Hv.
 Qed.
 
 Lemma declaration_apply_inv : forall AI N a C v,
   AI @ N @r a @r C ==> v -> exists R D, AI @ N ==> R /\ R @ a ==> D /\ D @ C ==> v.
 Proof.
-  intros AI N a C v H; destruct (eval_pair_inv _ _ _ H) as [D [c [HD [Hc Hv]]]]; inv_out Hc.
-  destruct (eval_pair_inv _ _ _ HD) as [R [c' [HR [Hc' Ha]]]]; inv_out Hc'.
+  intros AI N a C v H; destruct (eval_appl_inv _ _ _ _ H) as [D [HD Hv]].
+  destruct (eval_appl_inv _ _ _ _ HD) as [R [HR Ha]].
   exists R, D; repeat split; assumption.
 Qed.
 
@@ -703,7 +699,7 @@ Lemma check_function_direct_some_inv : forall C continuation,
 Proof.
   intros C continuation H; unfold check_function_direct in H; cbn in H.
   invert_eval; eauto.
-  apply get_decorate_inv in H4; eauto.
+  match goal with H : get_decorate @ _ ==> _ |- _ => apply get_decorate_inv in H end; eauto.
 Qed.
 
 Lemma check_function_direct_eval_inv :
@@ -717,10 +713,9 @@ Proof.
   intros type_app0 F U continuation E H Happly.
   unfold check_function_direct in H; cbn in H.
   invert_eval; eauto.
-  apply get_decorate_inv in H4; inversion H4; subst v5 v3.
-  exists v4; split.
-  - eapply eval_appl; eauto.
-  - reflexivity.
+  match goal with H : get_decorate @ _ ==> _ |- _ =>
+    apply get_decorate_inv in H; inversion H; subst end.
+  eexists; split; [eapply eval_appl; eauto | reflexivity].
 Qed.
 
 Lemma get_tagged_success_inv : forall T P,
@@ -769,11 +764,7 @@ Definition rec_cert_fn C :=
   if ceqb C (rec_Z U V) then Sm ('K1 (Sm (funty_eliminator U V))) else Lf.
 
 Local Ltac rc_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first [ eassumption | apply equal_eval | apply tagged_fun_app | apply acc_wait_prog_wait ]
-  end.
+  closed_eval_goal; first [ eassumption | apply equal_eval | apply tagged_fun_app | apply acc_wait_prog_wait ].
 Local Ltac rc_eval :=
   first [ rc_atom | evaluate_expr_core rc_eval rc_head | idtac ]
 with rc_head :=
@@ -801,7 +792,7 @@ Lemma check_function_recursive_eval_inv :
     E = funty_eliminator U V.
 Proof.
   intros type_app0 C continuation E H Happly.
-  pose proof (eval_deterministic _ _ H _ (check_function_recursive_eval C)) as Heq.
+  pose proof (eval_deterministic _ _ _ H _ (check_function_recursive_eval C)) as Heq.
   unfold rec_cert_fn in Heq; cbv zeta in Heq.
   destruct (ceqb C _) eqn:Hc; [|discriminate].
   apply ceqb_true in Hc; inversion Heq; subst continuation.
@@ -820,7 +811,7 @@ Proof.
     by (eapply eval_deterministic; [exact Hdefault | exact Hcanonical]).
   subst continuation.
   assert (Hfail : ('K1 Lf) @ A ==> Lf) by evaluate.
-  pose proof (eval_deterministic _ _ Happly _ Hfail) as Hbad.
+  pose proof (eval_deterministic _ _ _ Happly _ Hfail) as Hbad.
   discriminate Hbad.
 Qed.
 
@@ -828,7 +819,7 @@ Lemma check_function_recursive_never_fork : forall C left right,
   check_function_recursive @ C ==> Fk left right -> False.
 Proof.
   intros C left right H.
-  pose proof (eval_deterministic _ _ H _ (check_function_recursive_eval C)) as Heq.
+  pose proof (eval_deterministic _ _ _ H _ (check_function_recursive_eval C)) as Heq.
   unfold rec_cert_fn in Heq; cbv zeta in Heq.
   destruct (ceqb _ _); discriminate.
 Qed.
@@ -937,7 +928,7 @@ Lemma function_declared : forall (AI : Decl) app C E,
 Proof.
   intros AI app C E H.
   pose proof (function_abstractor_eval app C E H) as Hf.
-  destruct (eval_pair_inv _ _ _ Hf) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ _ Hf) as [w [Hw Hw2]].
   repeat (eapply eval_appl; [|eassumption]); exact (functions_declared AI).
 Qed.
 
@@ -946,9 +937,9 @@ Lemma function_row_inv : forall AI app C r,
   AI @ fun_nm @r app @r C ==> r -> function_abstractor_core @ C @r app ==> r.
 Proof.
   intros AI app C r HF H.
-  destruct (eval_pair_inv _ _ _ H) as [D [c [HD [Hc Hv]]]]; inv_out Hc.
-  destruct (eval_pair_inv _ _ _ HD) as [R [c' [HR [Hc' Ha]]]]; inv_out Hc'.
-  pose proof (eval_deterministic _ _ HR _ HF) as ->.
+  destruct (eval_appl_inv _ _ _ _ H) as [D [HD Hv]].
+  destruct (eval_appl_inv _ _ _ _ HD) as [R [HR Ha]].
+  pose proof (eval_deterministic _ _ _ HR _ HF) as ->.
   apply function_abstractor_eval_inv; eapply eval_appl; eassumption.
 Qed.
 
@@ -964,7 +955,7 @@ Lemma funty_eliminator_inv : forall U V a X R,
   funty_eliminator U V @ a @r X ==> Sm R ->
   X = U /\ R = V.
 Proof.
-  intros U V a X R H; pose proof (eval_deterministic _ _ H _ (funty_eliminator_app U V a X)) as Heq.
+  intros U V a X R H; pose proof (applied_deterministic _ _ _ H _ (funty_eliminator_app U V a X)) as Heq.
   destruct (ceqb U X) eqn:Hc; [|discriminate].
   apply ceqb_true in Hc; inversion Heq; subst; auto.
 Qed.
@@ -985,9 +976,7 @@ Lemma payload_eliminator_head : forall A a,
 Proof.
   intros A a; eexists; split.
   - apply wait_eval; unfold payload_elim; evaluate.
-  - intros F V; split; intro H.
-    + invert_eval; repeat (eapply eval_appl; eauto).
-    + inv_out H; evaluate; eauto.
+  - intros F V; split; intro H; invert_eval; evaluate.
 Qed.
 Lemma payload_eliminator_some : forall A a F V,
   a @ F @r A ==> V -> payload_eliminator A @ a @r F ==> V.
@@ -999,8 +988,8 @@ Lemma payload_eliminator_inv : forall A a X V,
   payload_eliminator A @ a @r X ==> V -> a @ X @r A ==> V.
 Proof.
   intros A a X V H; destruct (payload_eliminator_head A a) as [w [Hw Hi]].
-  destruct (eval_pair_inv _ _ _ H) as [w' [u [Hw' [Hu Hv]]]]; inv_out Hu.
-  pose proof (eval_deterministic _ _ Hw' _ Hw) as ->; apply Hi; exact Hv.
+  destruct (eval_appl_inv _ _ _ _ H) as [w' [Hw' Hv]].
+  pose proof (eval_deterministic _ _ _ Hw' _ Hw) as ->; apply Hi; exact Hv.
 Qed.
 
 
@@ -1089,25 +1078,17 @@ Definition type_app_S := Eval cbv in to_tree <{
 End TypeAppSClause.
 
 
-Lemma eval_app_r_inv : forall e x v,
-  Fk e (Sm x) ==> v -> exists w, e ==> w /\ w @ x ==> v.
-Proof.
-  intros e x v H; destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hv]]]].
-  inversion Hu; subst u; eauto.
-Qed.
-
-
 Local Transparent equal1.
 Lemma type_app_abstract_case_S_none : forall G F,
   (forall E N, 'S2[G,F] <> 'tagged[E,N]) ->
-  (to_tree (tcase (''tagged[Ref "E", Ref "N"])
-    (Ref "E")) @ 'S2[G,F]) ==> Lf.
+  to_tree (tcase (''tagged[Ref "E", Ref "N"])
+    (Ref "E")) @ 'S2[G,F] ==> Lf.
 Proof.
   intros G F Hnot.
   assert (Hgeneric : forall T,
     (forall E N, T <> 'tagged[E,N]) ->
-    (to_tree (tcase (''tagged[Ref "E", Ref "N"])
-      (Ref "E")) @ T) ==> Lf).
+    to_tree (tcase (''tagged[Ref "E", Ref "N"])
+      (Ref "E")) @ T ==> Lf).
   {
     intros T Hplain.
     destruct T as [|T|X Y]; try (cbv; evaluate; fail).
@@ -1191,7 +1172,7 @@ Proof.
   unfold structural_triage; split; intro H.
   - apply wait_eval_inv in H; inv_out H.
     match goal with H1 : _ @ Fk F0 F1 ==> ?v |- _ =>
-      pose proof (eval_deterministic _ _ H1 _ HS) as ->; assumption end.
+      pose proof (eval_deterministic _ _ _ H1 _ HS) as ->; assumption end.
   - apply wait_eval; eapply eval_appl; [exact HS|exact H].
 Qed.
 Lemma structural_triage_error : forall rec F0 F1 F2 E N U R,
@@ -1206,18 +1187,18 @@ Proof.
   unfold structural_triage; split; intro H.
   - apply wait_eval_inv in H; inv_out H.
     match goal with H1 : _ @ Fk F0 F1 ==> ?v |- _ =>
-      pose proof (eval_deterministic _ _ H1 _ HS) as ->; assumption end.
+      pose proof (eval_deterministic _ _ _ H1 _ HS) as ->; assumption end.
   - apply wait_eval; eapply eval_appl; [exact HS|exact H].
 Qed.
 Lemma error_triage_fails : forall U, error_triage @ U ==> Lf.
 Proof. intros; unfold error_triage; evaluate. Qed.
 Lemma error_triage_not_some : forall U V, ~ (error_triage @ U ==> Sm V).
 Proof.
-  intros U V H; pose proof (eval_deterministic _ _ H _ (error_triage_fails U)); discriminate.
+  intros U V H; pose proof (eval_deterministic _ _ _ H _ (error_triage_fails U)); discriminate.
 Qed.
 
 Local Ltac split_apps_local :=
-  repeat match goal with H : Fk (Fk ?a ?b) ?c ==> _ |- _ => inv_out H end.
+  split_chains.
 Local Ltac run_check :=
   first [eassumption | apply equal_eval | apply equal1_eq |
     evaluate_expr_core run_check run_check_head | idtac]
@@ -1353,8 +1334,8 @@ Lemma get_name_test_inv : forall C nm,
  get_name_test @ C ==> Sm nm -> C = name_test nm.
 Proof.
   intros C nm H; destruct (get_name_test_spec C) as [v [Hv [[E ->]|[_ ->]]]].
-  - pose proof (eval_deterministic _ _ H _ Hv) as HE; inversion HE; subst nm; exact E.
-  - pose proof (eval_deterministic _ _ H _ Hv); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ Hv) as HE; inversion HE; subst nm; exact E.
+  - pose proof (eval_deterministic _ _ _ H _ Hv); discriminate.
 Qed.
 Ltac name_failure := apply get_name_test_none;
   let N := fresh "N" in let HE := fresh "HE" in
@@ -1364,7 +1345,7 @@ Ltac name_failure := apply get_name_test_none;
 Local Ltac run := first [eassumption|apply equal_eval|apply equal1_eq|
  evaluate_expr_core run run_head|idtac]
 with run_head := first [eassumption|apply equal_eval|apply equal1_eq|evaluate_head_core run|idtac].
-Local Ltac split_apps := repeat match goal with H : Fk (Fk ?a ?b) ?c ==> _ |- _ => inv_out H end.
+Local Ltac split_apps := split_chains.
 Local Opaque payload_eliminator.
 (** ** Wrapper lookup *)
 (** The abstractor of the wrapper with payload program [p]: when
@@ -1489,9 +1470,9 @@ Local Ltac ord_prep AI rec :=
     by (eexists; unfold type_app_S; cbn; evaluate);
   destruct Ht as [? Ht].
 Local Ltac prune_evals := repeat match goal with
-  | H1 : ?e ==> ?a, H2 : ?e ==> ?b |- _ =>
+  | H1 : ?ef @ ?eu ==> ?a, H2 : ?ef @ ?eu ==> ?b |- _ =>
       let E := fresh "E" in
-      pose proof (eval_deterministic _ _ H1 _ H2) as E; clear H1;
+      pose proof (eval_deterministic _ _ _ H1 _ H2) as E; clear H1;
       inversion E; subst; try clear E
   end.
 Local Ltac extend_chain := match goal with
@@ -1515,7 +1496,7 @@ Lemma default_stem : forall AI rec G v,
   type_app_stem AI @ rec @r G ==> v -> default_body AI @ rec @r Sm G ==> v.
 Proof.
   intros AI rec G v H.
-  destruct (eval_app_r_inv _ _ _ H) as [s [Hs Hv]].
+  destruct (eval_appl_inv _ _ _ _ H) as [s [Hs Hv]].
   assert (Ht : exists t, type_app_S @ rec ==> t)
     by (eexists; unfold type_app_S; cbn; evaluate).
   destruct Ht as [t Ht].
@@ -1535,8 +1516,8 @@ Lemma default_S : forall AI rec G H v,
 Proof.
   intros AI rec G H v Hv.
   destruct (type_app_stem_head AI rec) as [s Hs].
-  destruct (eval_app_r_inv _ _ _ Hv) as [t1 [Ht1 Hv1]].
-  destruct (eval_app_r_inv _ _ _ Ht1) as [t [Ht Ht2]].
+  destruct (eval_appl_inv _ _ _ _ Hv) as [t1 [Ht1 Hv1]].
+  destruct (eval_appl_inv _ _ _ _ Ht1) as [t [Ht Ht2]].
   pose proof (get_tagged_none (Sm G) ltac:(intros; discriminate)) as HG.
   unfold default_body, extend_program; ord_run.
 Qed.
@@ -1545,7 +1526,7 @@ Lemma default_S_app : forall AI rec G H U R,
   type_app_S @ rec @r G @r H @r U ==> R -> default_body AI @ rec @r ('S2[G,H]) @r U ==> R.
 Proof.
   intros AI rec G H U R HR.
-  destruct (eval_app_r_inv _ _ _ HR) as [w [Hw HR']].
+  destruct (eval_appl_inv _ _ _ _ HR) as [w [Hw HR']].
   eapply eval_appl; [apply default_S; exact Hw|exact HR'].
 Qed.
 
@@ -1583,9 +1564,9 @@ Proof.
  destruct (tagged_decide (Fk F0 F1)) as [[E [N HE]]|HP].
  - left; split; [exists E, N; exact HE|].
    inversion HE; subst F0 F1.
-   exact (eval_deterministic _ _ H _ (triage_case_error rec E N F2)).
+   exact (applied_deterministic _ _ _ H _ (triage_case_error rec E N F2)).
  - right; split; [exact HP|].
-   exact (eval_deterministic _ _ H _ (triage_case_plain rec _ _ _ HP)).
+   exact (applied_deterministic _ _ _ H _ (triage_case_plain rec _ _ _ HP)).
 Qed.
 
 (** At a triage, the ordinary clauses and [triage_case] select the same
@@ -1608,8 +1589,8 @@ Proof.
  intros AI rec F0 F1 F2 w.
  destruct (default_triage_agree AI rec F0 F1 F2) as [w0 [HT HD]].
  split; intro H.
- - rewrite (eval_deterministic _ _ H _ HD); exact HT.
- - rewrite (eval_deterministic _ _ H _ HT); exact HD.
+ - rewrite (applied_deterministic _ _ _ H _ HD); exact HT.
+ - rewrite (applied_deterministic _ _ _ H _ HT); exact HD.
 Qed.
 
 Lemma default_stem_inv : forall AI rec G w,
@@ -1619,7 +1600,7 @@ Proof.
   assert (Hv : exists v, type_app_stem AI @ rec @r G ==> v)
     by (pose proof (function_abstractor_partial rec); eexists; unfold type_app_stem; cbn; repeat first [eassumption | progress evaluate]).
   destruct Hv as [v Hv].
-  rewrite (eval_deterministic _ _ H _ (default_stem AI rec G v Hv)); exact Hv.
+  rewrite (applied_deterministic _ _ _ H _ (default_stem AI rec G v Hv)); exact Hv.
 Qed.
 
 Lemma default_S_head_inv : forall AI rec G H w,
@@ -1686,7 +1667,7 @@ Lemma default_head : forall AI rec,
   exists d, default_body AI @ rec ==> d /\ d @ Lf ==> type_app_leaf.
 Proof.
   intros AI rec.
-  destruct (eval_app_r_inv _ _ _ (default_leaf AI rec)) as [d [Hd H]]; eauto.
+  destruct (eval_appl_inv _ _ _ _ (default_leaf AI rec)) as [d [Hd H]]; eauto.
 Qed.
 
 (** Forward: off the F-level clause, [body] is the ordinary clauses. *)
@@ -1697,10 +1678,10 @@ Proof.
   intros AI rec F w HA0 HG H.
   pose proof (wait_abstract_wait_none rec F HA0) as HA.
   destruct (default_head AI rec) as [d [Hd HL]].
-  destruct (eval_app_r_inv _ _ _ H) as [d' [Hd' Hw]].
-  rewrite (eval_deterministic _ _ Hd' _ Hd) in Hw; clear Hd'.
+  destruct (eval_appl_inv _ _ _ _ H) as [d' [Hd' Hw]].
+  rewrite (eval_deterministic _ _ _ Hd' _ Hd) in Hw; clear Hd'.
   destruct F as [|G|X Y].
-  - rewrite (eval_deterministic _ _ Hw _ HL); clear Hw.
+  - rewrite (eval_deterministic _ _ _ Hw _ HL); clear Hw.
     unfold body; run.
   - unfold body; run.
   - unfold body, extend_program; run.
@@ -1727,7 +1708,7 @@ Proof.
   intros AI rec F w H.
   destruct (tagged_decide F) as [[E [N ->]]|HP].
   { left; exists E, N; split; [reflexivity|].
-    exact (eval_deterministic _ _ H _ (body_abstract AI rec E N)). }
+    exact (applied_deterministic _ _ _ H _ (body_abstract AI rec E N)). }
   right.
   unfold body in H; invert_eval.
   1,2: split; [exact HP|eauto 6 using eval_appl].
@@ -1740,7 +1721,7 @@ Proof.
       by (apply wait2_eval; eauto using eval_appl)
   end.
   destruct (extend_w_inv _ _ _ _ HE) as [[v [HS _]]|[[_ HE2]|[l [q [HS _]]]]].
-  1,3: pose proof (eval_deterministic _ _ HS _ HA); discriminate.
+  1,3: pose proof (eval_deterministic _ _ _ HS _ HA); discriminate.
   split; [exact HP|eauto 6 using eval_appl].
 Qed.
 
@@ -1752,10 +1733,10 @@ Proof.
   intros AI rec F w HA0 H.
   pose proof (wait_abstract_wait_none rec F HA0) as HA.
   destruct (default_head AI rec) as [d [Hd HL]].
-  destruct (eval_app_r_inv _ _ _ H) as [d' [Hd' Hw]].
-  rewrite (eval_deterministic _ _ Hd' _ Hd) in Hw; clear Hd'.
+  destruct (eval_appl_inv _ _ _ _ H) as [d' [Hd' Hw]].
+  rewrite (eval_deterministic _ _ _ Hd' _ Hd) in Hw; clear Hd'.
   destruct F as [|G|X Y].
-  - rewrite (eval_deterministic _ _ Hw _ HL); clear Hw.
+  - rewrite (eval_deterministic _ _ _ Hw _ HL); clear Hw.
     unfold body; run.
   - unfold body; run.
   - unfold body, extend_program; run.
@@ -1767,7 +1748,7 @@ Lemma default_application : forall AI F U R,
  default_body AI @ app AI @r F @r U ==> R -> app AI @ F @r U ==> R.
 Proof.
  intros AI F U R HA HG HC.
- destruct (eval_app_r_inv _ _ _ HC) as [w [Hw HR]].
+ destruct (eval_appl_inv _ _ _ _ HC) as [w [Hw HR]].
  eapply eval_appl; [apply Z_unfold; apply body_default; eassumption|exact HR].
 Qed.
 
@@ -1803,7 +1784,7 @@ Proof.
  intros AI F U R H;apply default_application.
  - apply abstract_case_plain;intros;discriminate.
  - apply get_name_test_stem.
- - destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+ - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw HR]].
    eapply eval_appl;[apply default_stem;exact Hw|exact HR].
 Qed.
 
@@ -1873,7 +1854,7 @@ Lemma default_triage : forall AI rec F0 F1 F2 U R,
   default_body AI @ rec @r 'triage[F0,F1,F2] @r U ==> R.
 Proof.
   intros AI rec F0 F1 F2 U R H.
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw HR]].
   eapply eval_appl; [apply (proj2 (default_triage_iff AI rec F0 F1 F2 w)); exact Hw|exact HR].
 Qed.
 
@@ -1940,7 +1921,7 @@ Lemma app_stem_inv : forall AI F U R,
   type_app_stem AI @ app AI @r F @r U ==> R.
 Proof.
   intros AI F U R H.
-  destruct (eval_app_r_inv _ _ _ H) as [s [Hs Ha]].
+  destruct (eval_appl_inv _ _ _ _ H) as [s [Hs Ha]].
   pose proof (Z_unfold_inv _ _ _ Hs) as Hb.
   destruct (body_inv _ _ _ _ Hb) as [[E [N [HE _]]]|[_ HD]].
   - discriminate.
@@ -1960,7 +1941,7 @@ Proof.
     [ match goal with
       | HH : get_tagged @ ('tagged[C,N]) ==> ?v |- _ =>
           is_var v;
-          pose proof (eval_deterministic _ _ HH _ (get_tagged_some C N)) as HE;
+          pose proof (eval_deterministic _ _ _ HH _ (get_tagged_some C N)) as HE;
           subst v; clear HH
       end
     | progress invert_eval1 ].
@@ -1976,7 +1957,7 @@ Lemma type_app_stem_structural_inv : forall AI app F U R,
 Proof.
   intros AI app F U R Htag H.
   pose proof (type_app_stem_structural AI app F U Htag) as Hstruct.
-  pose proof (eval_deterministic _ _ H _ Hstruct); congruence.
+  pose proof (applied_deterministic _ _ _ H _ Hstruct); congruence.
 Qed.
 
 Local Opaque type_app_stem extend_program.
@@ -2098,8 +2079,8 @@ Lemma app_abstract_inv : forall AI E N U R,
  app AI @ 'tagged[E,N] @r U ==> R -> E @ app AI @r U ==> R.
 Proof.
  intros AI E N U R H.
- destruct (eval_app_r_inv _ _ _ H) as [f [Hf Hr]].
- pose proof (eval_deterministic _ _ Hf _ (app_abstract_head AI E N)) as ->.
+ destruct (eval_appl_inv _ _ _ _ H) as [f [Hf Hr]].
+ pose proof (eval_deterministic _ _ _ Hf _ (app_abstract_head AI E N)) as ->.
  apply wait_eval_inv; exact Hr.
 Qed.
 
@@ -2110,10 +2091,10 @@ Lemma app_plain_inv : forall AI C U V,
  default_body AI @ app AI @r C @r U ==> Sm V.
 Proof.
  intros AI C U V HA H.
- destruct (eval_app_r_inv _ _ _ H) as [s [Hs Ha]].
+ destruct (eval_appl_inv _ _ _ _ H) as [s [Hs Ha]].
  pose proof (Z_unfold_inv _ _ _ Hs) as Hb; clear H Hs.
  destruct (body_inv _ _ _ _ Hb) as [[E [N [-> ->]]]|[_ HD]].
- - pose proof (eval_deterministic _ _ HA _ (abstract_case_tagged E N)); discriminate.
+ - pose proof (eval_deterministic _ _ _ HA _ (abstract_case_tagged E N)); discriminate.
  - eapply eval_appl; [exact HD|exact Ha].
 Qed.
 
@@ -2127,7 +2108,7 @@ Lemma default_triage_inv : forall AI rec F0 F1 F2 U V,
  triage_case @ rec @r F0 @r F1 @r F2 @r U ==> Sm V.
 Proof.
  intros AI rec F0 F1 F2 U V H.
- destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+ destruct (eval_appl_inv _ _ _ _ H) as [w [Hw HR]].
  eapply eval_appl; [apply (proj1 (default_triage_iff AI rec F0 F1 F2 w)); exact Hw|exact HR].
 Qed.
 
@@ -2137,7 +2118,7 @@ Lemma triage_case_inv : forall rec F0 F1 F2 U V,
  structural_triage rec F0 F1 F2 @ U ==> Sm V.
 Proof.
  intros rec F0 F1 F2 U V H.
- destruct (eval_pair_inv _ _ _ H) as [h [u [HH [HU HR]]]]; inversion HU; subst u; clear HU.
+ destruct (eval_appl_inv _ _ _ _ H) as [h [HH HR]].
  destruct (triage_case_head _ _ _ _ _ HH)
    as [[[E [N HE]] ->]|[HP ->]].
  - exfalso; exact (error_triage_not_some _ _ HR).
@@ -2155,12 +2136,12 @@ Proof.
   - assert (HF : structural_fork rec F2 @ X @r Y ==> Lf).
     { pose proof (get_tagged_some E N) as HG; rewrite <- HE in HG.
       unfold structural_fork; evaluate. }
-    pose proof (eval_deterministic _ _ H _ HF); discriminate.
+    pose proof (applied_deterministic _ _ _ H _ HF); discriminate.
   - pose proof (get_tagged_none _ Hplain) as HG.
     split; [exact Hplain|].
     unfold structural_fork in H; invert_eval.
     all: match goal with HX : get_tagged @ _ ==> _ |- _ =>
-      pose proof (eval_deterministic _ _ HX _ HG); clear HX; subst end.
+      pose proof (eval_deterministic _ _ _ HX _ HG); clear HX; subst end.
     all: invert_eval.
     eexists; split; eauto using eval_appl.
 Qed.
@@ -2182,7 +2163,7 @@ Proof.
   - destruct U as [|N|X Y]; unfold structural_triage, plain_triage, error_triage in H; invert_eval.
     all: repeat match goal with HX : get_tagged @ _ ==> _ |- _ =>
       let HH := fresh "HH" in
-      pose proof (eval_deterministic _ _ HX _ (get_tagged_none _ Hplain)) as HH;
+      pose proof (eval_deterministic _ _ _ HX _ (get_tagged_none _ Hplain)) as HH;
       clear HX; inversion HH; subst; clear HH end.
     all: invert_eval.
     all: try solve [left; split; [exact Hplain|left; split;reflexivity]].
@@ -2202,7 +2183,7 @@ Lemma default_S_inv : forall AI rec G F U V,
    rec @ F @r U ==> Sm VF /\ rec @ VG @r VF ==> Sm V.
 Proof.
  intros AI rec G F U V H.
- destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+ destruct (eval_appl_inv _ _ _ _ H) as [w [Hw HR]].
  apply default_S_head_inv in Hw.
  pose proof (eval_appl _ _ _ _ _ Hw HR) as H'; clear H Hw HR.
  Local Transparent type_app_S.
@@ -2266,11 +2247,11 @@ Proof.
   Local Transparent structural_fork.
   destruct U as [|X|X Y]; unfold plain_triage.
   - evaluate.
-  - destruct (eval_app_r_inv _ _ _ (HQ X)) as [h [Hh HX]].
+  - destruct (eval_appl_inv _ _ _ _ (HQ X)) as [h [Hh HX]].
     repeat first [eassumption | apply wait_eval | progress evaluate].
   - pose proof (get_tagged_none _ HU) as HG.
-    destruct (eval_app_r_inv _ _ _ (HQQ X)) as [h1 [Hh1 HX1]].
-    destruct (eval_app_r_inv _ _ _ (HQ Y)) as [h2 [Hh2 HX2]].
+    destruct (eval_appl_inv _ _ _ _ (HQQ X)) as [h1 [Hh1 HX1]].
+    destruct (eval_appl_inv _ _ _ _ (HQ Y)) as [h2 [Hh2 HX2]].
     unfold structural_fork; repeat first [eassumption | apply wait_eval | progress evaluate].
   Local Opaque structural_fork.
 Qed.
@@ -2337,7 +2318,7 @@ Variable AI : Combination.
 Local Abbreviation type_app := (typing.type_app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 
-(** 2. Type inference for programs and expressions
+(** 2. Type inference for programs
     Soundness of type inference will require
     soundness of AI when typing tagged terms only. 
  *) 
@@ -2405,8 +2386,8 @@ Definition infer_body_package :
 Definition infer  :=  Z infer_body.
 
 
-Local Notation "F # U" := (type_app @ F @r U)
-                      (at level 45, left associativity).
+Local Notation "F # U ==> T" := (type_app @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 
 (* type inference for programs *) 
 
@@ -2445,7 +2426,7 @@ Proof.
   1,3: repeat first [eassumption|progress evaluate].
   destruct b as [|U2|b1 b2]; [subst R| |subst R].
   1,3: repeat first [eassumption|progress evaluate].
-  destruct (eval_app_r_inv _ _ _ HR) as [f' [Hf' HR']]; clear Hf.
+  destruct (eval_appl_inv _ _ _ _ HR) as [f' [Hf' HR']]; clear Hf.
   repeat first [eassumption|progress evaluate].
 Qed.
 
@@ -2484,9 +2465,7 @@ Lemma infer_stem_inv :
     exists U, T = Sm U /\ infer @ u ==> Sm U.
 Proof.
   intros u T H.
-  assert (infer_body @ infer @r Sm u ==> Sm T)
-    by (eapply Z_unfold_inv; exact H).
-  invert_eval; inv_out H5; invert_eval; evaluate; eauto.
+  apply Z_unfold_inv in H; unfold infer_body in H; invert_eval.
 Qed.
 
 Lemma infer_fork_inv :
@@ -2579,7 +2558,7 @@ Proof.
     infer @ ('K1 f) ==> Sm ('K1 F))
     by (eapply infer_K1; exact Hf).
   pose proof
-    (eval_deterministic _ _ Hfun _ Hfun_canonical) as Hfun_eq.
+    (eval_deterministic _ _ _ Hfun _ Hfun_canonical) as Hfun_eq.
   inversion Hfun_eq; subst fun_ty.
   destruct (infer_fork_inv _ _ _ Hright)
     as [K_ty [kn_ty [HK [Hkn Hright_app]]]].
@@ -2593,7 +2572,7 @@ Proof.
     - eapply infer_K1; exact Hn.
     - eapply typing.type_app_stem_ev; eapply type_app_stem_structural; discriminate. }
   pose proof
-    (eval_deterministic _ _ Hright _ Hright_canonical) as Hright_eq.
+    (eval_deterministic _ _ _ Hright _ Hright_canonical) as Hright_eq.
   inversion Hright_eq; subst right_ty.
   assert (Hadapt :
     type_app_stem @ type_app @r (Sm ('K1 (F))) @r ('S2['K,'K1 (N0)]) ==>
@@ -2625,7 +2604,7 @@ Proof.
     as [fun_ty [Hleft_ty Hfun]]; subst left_ty.
   destruct (infer_fork_inv _ _ _ Hfun)
     as [leaf_ty [F [Hleaf [Hf Hfun_app]]]].
-  pose proof (eval_deterministic _ _ Hfun _ (infer_K1 _ _ Hf)) as Hfun_eq.
+  pose proof (eval_deterministic _ _ _ Hfun _ (infer_K1 _ _ Hf)) as Hfun_eq.
   inversion Hfun_eq; subst fun_ty.
   destruct (infer_fork_inv _ _ _ Hright)
     as [K_ty [kn_ty [HK [Hkn Hright_app]]]].
@@ -2639,7 +2618,7 @@ Proof.
     - eapply infer_K1; exact Hn.
     - eapply typing.type_app_stem_ev; eapply type_app_stem_structural; discriminate. }
   pose proof
-    (eval_deterministic _ _ Hright _ Hright_canonical) as Hright_eq.
+    (eval_deterministic _ _ _ Hright _ Hright_canonical) as Hright_eq.
   inversion Hright_eq; subst right_ty.
   assert (Hadapt :
     type_app_stem @ type_app @r (Sm ('K1 F)) @r ('S2['K,'K1 N]) ==> Sm T)
@@ -2688,7 +2667,7 @@ Lemma infer_stem_result_inv : forall u T,
   exists t, u = Sm t /\ infer @ t ==> Sm T.
 Proof.
   intros [|t|u1 u2] T H.
-  - pose proof (eval_deterministic _ _ H _ infer_leaf) as Heq.
+  - pose proof (eval_deterministic _ _ _ H _ infer_leaf) as Heq.
     discriminate Heq.
   - destruct (infer_stem_inv _ _ H) as [U [Heq Hu]].
     inversion Heq; subst U; eauto.
@@ -2711,7 +2690,7 @@ Lemma infer_K1_inv : forall u F,
   exists f, u = 'K1 f /\ infer @ f ==> Sm F.
 Proof.
   intros [|t|u1 u2] F H.
-  - pose proof (eval_deterministic _ _ H _ infer_leaf) as Heq.
+  - pose proof (eval_deterministic _ _ _ H _ infer_leaf) as Heq.
     discriminate Heq.
   - destruct (infer_stem_inv _ _ H) as [U [Heq _]].
     discriminate Heq.
@@ -2745,7 +2724,7 @@ Proof.
   destruct (infer_fork_inv _ _ _ H)
     as [U1 [U [Hleaf [Hu Happ]]]].
   assert (HU1 : U1 = Lf).
-  { pose proof (eval_deterministic _ _ Hleaf _ infer_leaf) as Heq.
+  { pose proof (eval_deterministic _ _ _ Hleaf _ infer_leaf) as Heq.
     inversion Heq; reflexivity. }
   subst U1.
   assert (Hadapt :
@@ -2763,7 +2742,7 @@ Lemma infer_tag_right_inv : forall u N,
   exists n, u = 'S2['K,'K1 n] /\ infer @ n ==> Sm N.
 Proof.
   intros [|t|u1 u2] N H.
-  - pose proof (eval_deterministic _ _ H _ infer_leaf) as Heq.
+  - pose proof (eval_deterministic _ _ _ H _ infer_leaf) as Heq.
     discriminate Heq.
   - destruct (infer_stem_inv _ _ H) as [U [Heq _]].
     discriminate Heq.
@@ -2800,7 +2779,7 @@ Lemma infer_S2_K1_inv : forall u g N,
   exists n, u = 'S2[g,'K1 n] /\ infer @ n ==> Sm N.
 Proof.
   intros [|t|u1 u2] g N Hg HnotK H.
-  - pose proof (eval_deterministic _ _ H _ infer_leaf) as Heq.
+  - pose proof (eval_deterministic _ _ _ H _ infer_leaf) as Heq.
     discriminate Heq.
   - destruct (infer_stem_inv _ _ H) as [U [Heq _]].
     discriminate Heq.
@@ -2840,7 +2819,7 @@ Lemma infer_S2_inv : forall u G F,
     infer @ f ==> Sm F.
 Proof.
   intros [|t|u1 u2] G F Hnot_tagged H.
-  - pose proof (eval_deterministic _ _ H _ infer_leaf); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ infer_leaf); discriminate.
   - destruct (infer_stem_inv _ _ H) as [U [Heq _]]; discriminate Heq.
   - destruct (infer_fork_inv _ _ _ H)
       as [U1 [U2 [Hu1 [Hu2 Happ]]]].
@@ -2898,7 +2877,7 @@ Proof.
   assert (HIty : Ity = 'I).
   { assert (HI : infer @ 'I ==> Sm 'I).
     { eapply infer_tag_free; tag_free_tac. }
-    pose proof (eval_deterministic _ _ Hi _ HI) as Heq.
+    pose proof (eval_deterministic _ _ _ Hi _ HI) as Heq.
     inversion Heq; reflexivity. }
   subst Ity.
   assert (Houter :
@@ -2937,7 +2916,7 @@ Lemma infer_tagged_result_inv : forall u E N,
     AI @ N @r type_app @r F ==> Sm E.
 Proof.
   intros [|t|u1 u2] E N H.
-  - pose proof (eval_deterministic _ _ H _ infer_leaf) as Heq.
+  - pose proof (eval_deterministic _ _ _ H _ infer_leaf) as Heq.
     discriminate Heq.
   - destruct (infer_stem_inv _ _ H) as [U [Heq _]].
     discriminate Heq.
@@ -3101,7 +3080,7 @@ Proof.
     infer @ ('K1 f) ==> Sm ('K1 F))
     by (eapply infer_K1; exact Hf).
   pose proof
-    (eval_deterministic _ _ Hfun _ Hfun_canonical) as Hfun_eq.
+    (eval_deterministic _ _ _ Hfun _ Hfun_canonical) as Hfun_eq.
   inversion Hfun_eq; subst fun_ty.
   destruct (infer_fork_inv AI _ _ _ Hright)
     as [K_ty [kn_ty [HK [Hkn Hright_app]]]].
@@ -3115,7 +3094,7 @@ Proof.
     - eapply infer_K1; exact Hn.
     - eapply typing.type_app_stem_ev; eapply type_app_stem_structural; discriminate. }
   pose proof
-    (eval_deterministic _ _ Hright _ Hright_canonical) as Hright_eq.
+    (eval_deterministic _ _ _ Hright _ Hright_canonical) as Hright_eq.
   inversion Hright_eq; subst right_ty.
   assert (Hadapt :
     type_app_stem @ type_app @r (Sm ('K1 (F))) @r ('S2['K,'K1 (N0)]) ==>
@@ -3132,7 +3111,7 @@ Lemma infer_plain_fork_inv : forall u L R,
   exists l r, u = Fk l r /\ infer @ l ==> Sm L /\ infer @ r ==> Sm R.
 Proof.
   intros [|t|l r] L R Hnot H.
-  - pose proof (eval_deterministic _ _ H _ (infer_leaf AI)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (infer_leaf AI)); discriminate.
   - destruct (infer_stem_inv AI _ _ H) as [U [HE _]]; discriminate.
   - destruct (infer_fork_inv AI _ _ _ H) as [X [Y [Hl [Hr Happ]]]].
     assert (HS : type_app_stem @ type_app @r X @r Y ==> Sm (Fk L R))
@@ -3214,154 +3193,91 @@ From Stdlib Require Import String.
 Open Scope string_scope.
 Set Default Proof Using "Type".
 Local Opaque app inf type_app_stem.
-Section Expressions.
+(** Argument lists, as [has_type] takes them, are written [[x; y]]. *)
+Export List.ListNotations.
+Local Open Scope list_scope.
+
+(** * Typing applications
+
+    The type of [f] applied to [x1], ..., [xn] in turn is the type of [f]
+    applied by type application to the types of [x1], ..., [xn] in turn:
+    [has_type AI f [u] T] when [f : F], [u : U] and [F # U ==> Sm T].
+    [typed] takes the arguments last first, as [applied] does. *)
+Fixpoint typed (AI f : Combination) (rxs : list Combination) (T : Combination) : Prop :=
+  match rxs with
+  | nil => inf AI @ f ==> Sm T
+  | u :: rest => exists D U,
+      typed AI f rest D /\ inf AI @ u ==> Sm U /\ app AI @ D @r U ==> Sm T
+  end.
+
+Definition has_type (AI f : Combination) (xs : list Combination) (T : Combination) : Prop :=
+  typed AI f (List.rev xs) T.
+Arguments has_type : simpl never.
+
+Lemma has_type_ap : forall AI f u F U T,
+  inf AI @ f ==> Sm F -> inf AI @ u ==> Sm U -> app AI @ F @r U ==> Sm T ->
+  has_type AI f [u] T.
+Proof. intros; unfold has_type; cbn; eauto 6. Qed.
+
+Lemma has_type_apr : forall AI f xs u D U T,
+  has_type AI f xs D -> inf AI @ u ==> Sm U -> app AI @ D @r U ==> Sm T ->
+  has_type AI f (xs ++ [u]) T.
+Proof. intros; unfold has_type; rewrite List.rev_unit; cbn; eauto 6. Qed.
+
+Lemma has_type_ap_inv : forall AI f u T, has_type AI f [u] T ->
+  exists F U, inf AI @ f ==> Sm F /\ inf AI @ u ==> Sm U /\ app AI @ F @r U ==> Sm T.
+Proof. intros AI f u T H; exact H. Qed.
+
+Lemma has_type_apr_inv : forall AI f xs u T, has_type AI f (xs ++ [u]) T ->
+  exists D U, has_type AI f xs D /\ inf AI @ u ==> Sm U /\ app AI @ D @r U ==> Sm T.
+Proof. intros AI f xs u T H; unfold has_type in *; rewrite List.rev_unit in H; exact H. Qed.
+
+(** The type of a value applied to arguments depends on the first
+    arguments only through the type they give. *)
+Lemma has_type_prefix : forall AI f g xs ys,
+  (forall T, has_type AI f xs T -> has_type AI g ys T) ->
+  forall zs T, has_type AI f (xs ++ zs) T -> has_type AI g (ys ++ zs) T.
+Proof.
+  intros AI f g xs ys H zs; unfold has_type; rewrite !List.rev_app_distr.
+  induction (List.rev zs) as [|z rest IH]; intros T Hf; cbn [List.app typed] in *.
+  - exact (H T Hf).
+  - destruct Hf as [D [U [Hd [Hu HA]]]].
+    exists D, U; split; [exact (IH D Hd)|split; [exact Hu|exact HA]].
+Qed.
+
+(** Type an application to a list of arguments: the earlier arguments,
+    the last argument, and the type application of their types. *)
+Ltac has_type_intro :=
+  try (unfold has_type; cbn [List.rev List.app]);
+  match goal with
+  | |- typed _ _ (_ :: _) _ =>
+      do 2 eexists; split;
+      [ try (match goal with |- typed _ _ nil _ => cbn [typed] end) | split ]
+  end.
+
+Section ApplicationTyping.
 Variable AI : Combination.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 Local Abbreviation infer := (inf AI).
 Local Abbreviation type_app_stem_inv := (typing.app_stem_inv AI).
-Local Notation "x # y" := (Val type_app @@ x @@ y)
-  (in custom clause at level 20, left associativity).
-(** let Sm T1 = _ and Sm T2 = _ in T1 # T2, as a function of the two
-    results ([success2] compiled in place). *)
-Definition expression_success2_type_app_package :
-  { t : Combination |
-    to_tree <{ fun Sm "T1" , Sm "T2" => "T1" # "T2" }> = t }.
-Proof. eexists; simpl; reflexivity. Defined.
+Local Notation "F # U ==> T" := (type_app @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 
-Definition expression_success2_type_app :=
-  Eval cbn in proj1_sig
-    expression_success2_type_app_package.
-
-(** infer_expression = | Lf       => Lf
-                       | Sm u     => infer @ u
-                       | Fk e1 e2 => let Sm T1 = infer_expression @ e1 in
-                                     let Sm T2 = infer_expression @ e2 in T1 # T2
-    As compiled, both subexpressions are inferred before either result is
-    tested ([star] lifts the T1-free [infer_expression @ e2]); then
-    [type_app @ T1] is formed and, if T2 is a success, applied to T2. *)
-Definition infer_expression_body_package :
-  { t | to_tree <{
-      fun "infer_expression" =>
-        shape
-        | Lf => Lf
-        | Sm "u" => infer @ "u"
-        | Fk "e1" "e2" =>
-            let Sm "T1" = "infer_expression" @ "e1" in
-            let Sm "T2" = "infer_expression" @ "e2" in "T1" # "T2"
-        end }> = t}.
-Proof.  eexists; simpl; reflexivity.  Defined. 
-
- Definition infer_expression_body :=
-  Eval cbn in proj1_sig infer_expression_body_package.
-
-Definition infer_expression := 
-  Z infer_expression_body.
-
-
-Local Notation "F # U" := (type_app @ F @r U)
-                      (at level 45, left associativity).
-
-
-(** type inference for expressions *)
-
-Lemma infer_expression_leaf : infer_expression @ Lf ==> Lf.
-Proof. unfold infer_expression; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
-
-Lemma infer_expression_stem :
-  forall u T,
-    infer @ u ==> Sm T ->
-    infer_expression @ Sm u ==> Sm T.
-Proof. intros u T Hu; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
-
-Lemma infer_expression_fork :
-  forall e1 e2 T1 T2 R,
-    infer_expression @ e1 ==> Sm T1 ->
-    infer_expression @ e2 ==> Sm T2 ->
-    type_app @ T1 @r T2 ==> R ->
-    infer_expression @ Fk e1 e2 ==> R.
-Proof. intros; invert_eval; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
-
-Local Lemma expression_success2_type_app_inv :
-  forall v1 v2 T,
-    expression_success2_type_app @ v1 @r v2 ==> Sm T ->
-    exists T1 T2,
-      v1 = Sm T1 /\
-      v2 = Sm T2 /\
-      type_app @ T1 @r T2 ==> Sm T.
+(** Typing of [K] fork elimination. *)
+Lemma K_typing :
+  forall a u F U T,
+    infer @ ('K1 a) ==> Sm F -> infer @ u ==> Sm U -> F # U ==> Sm T ->
+    infer @ a ==> Sm T.
 Proof.
-  intros v1 v2 T H.
-  destruct v1 as [|T1|v11 v12];
-    destruct v2 as [|T2|v21 v22];
-    try (unfold expression_success2_type_app in H; cbn in H; invert_eval).
-  exists T1, T2; repeat split; try reflexivity.
-  evaluate.
-Qed.
-
-Lemma infer_expression_fork_gen_inv : forall e1 e2 R,
-  infer_expression @ Fk e1 e2 ==> R ->
-  exists a b, infer_expression @ e1 ==> a /\ infer_expression @ e2 ==> b /\
-    expression_success2_type_app @ a @r b ==> R.
-Proof.
-  intros e1 e2 R H; apply Z_unfold_inv in H; unfold infer_expression_body in H; invert_eval.
-  all: do 2 eexists; split; [eauto using eval_appl|split; [eauto using eval_appl|]].
-  all: unfold expression_success2_type_app; cbn; repeat first [eassumption|progress evaluate].
-Qed.
-
-
-Lemma infer_expression_stem_inv :
-  forall u T,
-    infer_expression @ Sm u ==> T ->
-    infer @ u ==> T.
-Proof.
-  intros u T H.
-  assert (infer_expression_body @ infer_expression @r Sm u ==> T)
-    by (eapply Z_unfold_inv; exact H).
-  inv_out H0; inv_out H5; invert_eval.
-Qed.
-
-Lemma infer_expression_fork_inv :
-  forall e1 e2 T,
-    infer_expression @ Fk e1 e2 ==> Sm T ->
-    exists T1 T2,
-      infer_expression @ e1 ==> Sm T1 /\
-      infer_expression @ e2 ==> Sm T2 /\
-      type_app @ T1 @r T2 ==> Sm T.
-Proof.
-  intros e1 e2 T H.
-  destruct (infer_expression_fork_gen_inv _ _ _ H) as [v2 [v4 [H1 [H2 Hsuccess]]]].
-  destruct (expression_success2_type_app_inv _ _ _ Hsuccess)
-    as [T1 [T2 [-> [-> Htype_app]]]].
-  exists T1, T2; repeat split; auto.
-Qed.
-
-(** Immediate reduct typing for [K] fork elimination. *)
-Lemma K_redex_typing :
-  forall v1 v2 T,
-    infer_expression @ (('K1 v1) @ v2) ==> Sm T ->
-    infer @ v1 ==> Sm T.
-Proof.
-  intros v1 v2 T Htyping.
-  destruct (infer_expression_fork_inv _ _ _ Htyping)
-    as [function_ty [argument_ty
-      [Hfunction_expr [Hargument_expr Hfinal_app]]]].
-  pose proof
-    (infer_expression_stem_inv _ _ Hfunction_expr) as Hfunction.
-  destruct (infer_fork_inv _ _ _ _ Hfunction)
-    as [leaf_ty [v1_ty [Hleaf [Hv1 Hconstructor_app]]]].
-  pose proof
-      (eval_deterministic _ _ Hleaf _ (inf_leaf AI)) as Hleaf_ty.
-  inversion Hleaf_ty; subst leaf_ty.
-  assert(type_app_stem @ type_app @r Lf @r v1_ty ==> Sm function_ty).
-  eapply type_app_stem_inv; eauto.
-  assert(type_app_stem @ type_app @r Lf @r v1_ty ==> Sm ('K1 v1_ty)) by
-    (eapply type_app_stem_structural; intros; discriminate).
-  assert(Sm function_ty = Sm ('K1 v1_ty)).
-  eapply eval_deterministic; eauto. inv_out H1.
-  assert(('K1 v1_ty) # argument_ty ==> Sm v1_ty)
-    by eapply typing.app_K.
-  assert(Sm T = Sm v1_ty) by (eapply eval_deterministic; eauto).
-  inv_out H2; auto.
+  intros a u F U T Hf Hu HT.
+  destruct (infer_fork_inv _ _ _ _ Hf) as [L [A [Hleaf [Ha Hc]]]].
+  pose proof (eval_deterministic _ _ _ Hleaf _ (inf_leaf AI)) as HL; inv_out HL.
+  apply type_app_stem_inv in Hc.
+  pose proof (type_app_stem_structural_inv AI type_app Lf A _
+    ltac:(intros; discriminate) Hc) as ->.
+  pose proof (applied_deterministic _ _ _ HT _ (app_K AI A U)) as HA; inv_out HA.
+  exact Ha.
 Qed.
 
 (** Once the inferred triage has query shape, inversion recovers the types
@@ -3415,31 +3331,7 @@ Proof.
   repeat split; assumption.
 Qed.
 
-
-Lemma infer_expression_program_tag_free : tag_free AI = true -> reserved_tagb (Lf 'C AI) = false ->
-  tag_free infer_expression = true.
-Proof.
-  Local Transparent inf app typing.type_app_stem.
-  intros HAI Hplain;
-  unfold infer_expression, infer_expression_body, expression_success2_type_app,
-    infer, infer_body, infer_fork_results, typing.type_app, app,
-    body, default_body, triage_case;
-  unfold type_app_stem;
-  vm_compute in HAI, Hplain |- *; repeat rewrite HAI; try rewrite Hplain; reflexivity.
-Local Opaque inf app typing.type_app_stem.
-Qed.
-
-
-Lemma infer_expression_self_typed : concrete AI ->
-  infer @ infer_expression ==> Sm infer_expression.
-Proof.
-  intros HL; apply infer_tag_free.
-  apply infer_expression_program_tag_free;
-    [apply concrete_tag_free; exact HL|apply concrete_ontology_plain; exact HL].
-Qed.
-
-
-End Expressions.
+End ApplicationTyping.
 
 
 Unset Default Proof Using.
@@ -3624,12 +3516,11 @@ Proof. intros; rewrite type_app_figure_body; reflexivity. Qed.
 
 End TypeAppFigure.
 
-(** * Value and expression inference, clause by clause as in the figure
+(** * Value inference, clause by clause as in the figure
 
-    The same check for the other two programs of the figure: written as
-    [match] on the argument with nested lets, they compile to the stored
-    bodies [infer_body] and [infer_expression_body].  [x # y] is the
-    stored type application, [type_app AI @ x @ y]. *)
+    The same check for inference: written as [match] on the argument with
+    nested lets, it compiles to the stored body [infer_body].  [x # y] is
+    the stored type application, [type_app AI @ x @ y]. *)
 Section InferFigures.
 Variable AI : Combination.
 Local Notation "x # y" := (Val (type_app AI) @@ x @@ y)
@@ -3653,17 +3544,4 @@ Definition infer_figure : Term := <{
 Lemma infer_figure_body : to_tree infer_figure = infer_body AI.
 Proof. reflexivity. Qed.
 
-Definition infer_expression_figure : Term := <{
-  fun "infer_expression" "e" => match "e" with
-  | Lf => Lf
-  | Sm "u" => {infer AI} @ "u"
-  | Fk "e1" "e2" =>
-      let Sm "T1" = "infer_expression" @ "e1" in
-      let Sm "T2" = "infer_expression" @ "e2" in "T1" # "T2"
-  end }>.
-
-(** The view compiles to the stored body of expression inference. *)
-Lemma infer_expression_figure_body :
-  to_tree infer_expression_figure = infer_expression_body AI.
-Proof. reflexivity. Qed.
 End InferFigures.

@@ -280,7 +280,7 @@ Qed.
     row but Query, Update and IsNamed is sound by typing. *)
 Lemma K1_row_sound : forall (P : Combination -> Prop) a X D,
   ('K1 X) @ a ==> D -> P X -> P D.
-Proof. intros P a X D H HX; pose proof (eval_deterministic _ _ H _ (eval_k _ _)) as ->; exact HX. Qed.
+Proof. intros P a X D H HX; pose proof (eval_deterministic _ _ _ H _ (eval_k _ _)) as ->; exact HX. Qed.
 
 Lemma paper_ontology_rows_declaration_sound : forall N R D,
   In (N, R) paper_ontology_rows -> R @ type_app paper_ontology ==> D ->
@@ -289,9 +289,9 @@ Proof.
   intros N R D Hin HD.
   unfold paper_ontology_rows, generic_rows, base_rows in Hin; cbn [In List.app] in Hin.
   repeat destruct Hin as [Hin|Hin]; try contradiction; inversion Hin; subst;
-    [pose proof (eval_deterministic _ _ HD _ (query_abstractor_partial paper_ontology)) as ->;
+    [pose proof (eval_deterministic _ _ _ HD _ (query_abstractor_partial paper_ontology)) as ->;
        apply plain_query_cond2; exact paper_ontology_supports_queries
-    |pose proof (eval_deterministic _ _ HD _ (update_abstractor_partial paper_ontology)) as ->;
+    |pose proof (eval_deterministic _ _ _ HD _ (update_abstractor_partial paper_ontology)) as ->;
        apply plain_update_cond2; exact paper_ontology_supports_updates
     |..];
     try (eapply (K1_row_sound (sound_abstractor paper_ontology)); [exact HD|]);
@@ -359,7 +359,7 @@ Proof.
         exfalso; exact (HTn eq_refl X eq_refl).
       * destruct (declaration_apply_inv _ _ _ _ _ HD) as [R [D [HR [HRD HDC]]]].
         destruct (paper_ontology_answers N) as [[D' [Hin HR']]|Href].
-        -- pose proof (eval_deterministic _ _ HR _ HR') as ->.
+        -- pose proof (eval_deterministic _ _ _ HR _ HR') as ->.
            exact (paper_ontology_rows_sound_by_typing _ _ _ Hin HQ HU HT HRD C E U V HDC HE).
         -- pose proof (declaration_K1_inv _ _ _ _ _ _ Href HD) as HC.
            exact (refusal_sound _ C E U V HC HE).
@@ -370,29 +370,27 @@ Lemma paper_ontology_sound : ontology_sound paper_ontology.
 Proof.
   intros N R D HR HD.
   destruct (paper_ontology_answers N) as [[R' [Hin HR']]|Href].
-  - pose proof (eval_deterministic _ _ HR _ HR') as ->.
+  - pose proof (eval_deterministic _ _ _ HR _ HR') as ->.
     exact (paper_ontology_rows_declaration_sound _ _ _ Hin HD).
-  - pose proof (eval_deterministic _ _ HR _ Href) as ->.
-    pose proof (eval_deterministic _ _ HD _ (eval_k _ _)) as ->.
+  - pose proof (eval_deterministic _ _ _ HR _ Href) as ->.
+    pose proof (eval_deterministic _ _ _ HD _ (eval_k _ _)) as ->.
     apply refusal_value_sound.
 Qed.
 
-Theorem paper_evaluation_preserves_typing :
-  forall e v T, e ==> v -> infer_expression paper_ontology @ e ==> Sm T ->
-    infer paper_ontology @ v ==> Sm T.
+Theorem paper_evaluation_preserves_typing : forall f u v F U T,
+  f @ u ==> v -> infer paper_ontology @ f ==> Sm F -> infer paper_ontology @ u ==> Sm U ->
+  type_app paper_ontology @ F @r U ==> Sm T -> infer paper_ontology @ v ==> Sm T.
 Proof.
-  intros e v T HE HI; exact (evaluation_preserves_typing _ e v T paper_ontology_sound HE HI).
+  intros f u v F U T; exact (evaluation_preserves_typing _ f u v F U T paper_ontology_sound).
 Qed.
 
 (** The bare name test cannot be typed at a salary (computed). *)
 Lemma name_test_salary_untyped :
   infer paper_ontology @ salary zero ==> Sm ('Salary) /\
-  ~ (exists T, infer_expression paper_ontology @ (name_test salary_nm @ salary zero) ==> Sm T).
+  ~ (exists T, has_type paper_ontology (name_test salary_nm) [salary zero] T).
 Proof.
   split.
-  - apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
-  - intros [T H].
-    assert (HL : infer_expression paper_ontology @ (name_test salary_nm @ salary zero) ==> Lf)
-      by (apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity).
-    pose proof (eval_deterministic _ _ H _ HL); discriminate.
+  - compute_eval (Nat.pow 10 6).
+  - intros [T H]; revert H.
+    apply (app_type_bounded_untyped _ (Nat.pow 10 6)); vm_compute; reflexivity.
 Qed.

@@ -104,7 +104,7 @@ Proof.
  assert (Hctor : computed_wrap_abstractor p @ C ==> Sm E).
  { exact (declaration_K1_inv _ _ _ _ _ _ HI HC). }
  apply computed_wrap_abstractor_inv in Hctor; destruct Hctor as [T' [HT [_ ->]]].
- pose proof (eval_deterministic _ _ HT _ HP) as HE; inversion HE;reflexivity.
+ pose proof (eval_deterministic _ _ _ HT _ HP) as HE; inversion HE;reflexivity.
 Qed.
 Lemma ontology_wrapper_tag : forall AI N T U,
  declared_wrapper AI N T -> ontology_tagged AI U ->
@@ -185,51 +185,32 @@ Local Ltac run_wr := first [eassumption|apply equal1_neq;discriminate|apply equa
 with run_head_wr := first [eassumption|apply equal1_neq;discriminate|apply equal1_eq|apply equal_eval|
  evaluate_head_core run_wr|idtac].
 Local Opaque equal equal1 get_tagname.
-Local Lemma update_eval_inv : forall e v, e ==> v ->
-  match e with
-  | Lf => False
-  | Sm u => v = u
-  | Fk op arg =>
-    match op with
-    | Lf => False
-    | Fk a b => exists w, Fk a b ==> w /\ Fk (Sm w) arg ==> v
-    | Sm f =>
-      match arg with
-      | Lf => False
-      | Fk a b => exists w, Fk a b ==> w /\ f @ w ==> v
-      | Sm u =>
-        match f with
-        | Lf => v = Sm u
-        | Sm a => v = Fk a u
-        | Fk Lf a => v = a
-        | Fk (Sm g) h => Fk (g @ u) (h @ u) ==> v
-        | Fk (Fk f0 f1) f2 =>
-          (u = Lf /\ v = f0) \/
-          (exists x, u = Sm x /\ f1 @ x ==> v) \/
-          (exists x y, u = Fk x y /\ f2 @ x @r y ==> v)
-        end
-      end
-    end
+Local Lemma update_eval_inv : forall f u v, f @ u ==> v ->
+  match f with
+  | Lf => v = Sm u
+  | Sm a => v = Fk a u
+  | Fk Lf a => v = a
+  | Fk (Sm g) h => exists a b, g @ u ==> a /\ h @ u ==> b /\ a @ b ==> v
+  | Fk (Fk f0 f1) f2 =>
+    (u = Lf /\ v = f0) \/
+    (exists x, u = Sm x /\ f1 @ x ==> v) \/
+    (exists x y a, u = Fk x y /\ f2 @ x ==> a /\ a @ y ==> v)
   end.
 Proof.
-  intros e v H; destruct H; cbn; eauto 8.
+  intros f u v H; destruct H; cbn; eauto 8.
 Qed.
 
 Local Ltac invert_update_eval :=
   match goal with
-  | H : eval (Sm _) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Fk _ _) _) _ |- _ =>
-      apply update_eval_inv in H; destruct H as [? [? ?]]
-  | H : eval (Fk (Sm _) (Fk _ _)) _ |- _ =>
-      apply update_eval_inv in H; destruct H as [? [? ?]]
-  | H : eval (Fk (Sm Lf) (Sm _)) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Sm (Sm _)) (Sm _)) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Sm (Fk Lf _)) (Sm _)) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Sm (Fk (Sm _) _)) (Sm _)) _ |- _ => apply update_eval_inv in H
-  | H : eval (Fk (Sm (Fk (Fk _ _) _)) (Sm _)) _ |- _ =>
+  | H : applied _ (_ :: _ :: _) _ |- _ => destruct H as [? [? ?]]
+  | H : Lf @ _ ==> _ |- _ => apply update_eval_inv in H; subst
+  | H : Sm _ @ _ ==> _ |- _ => apply update_eval_inv in H; subst
+  | H : Fk Lf _ @ _ ==> _ |- _ => apply update_eval_inv in H; subst
+  | H : Fk (Sm _) _ @ _ ==> _ |- _ =>
+      apply update_eval_inv in H; destruct H as [? [? [? [? ?]]]]
+  | H : Fk (Fk _ _) _ @ _ ==> _ |- _ =>
       apply update_eval_inv in H;
-      destruct H as [[? ?]|[[? [? ?]]|[? [? [? ?]]]]]; subst
-  | H : eval (Fk Lf _) _ |- _ => apply update_eval_inv in H; contradiction
+      destruct H as [[? ?]|[[? [? ?]]|[? [? [? [? [? ?]]]]]]]; subst
   | H : Sm _ = Sm _ |- _ => injection H; clear H; intros; subst
   | H : Fk _ _ = Fk _ _ |- _ => injection H; clear H; intros; subst
   end.
@@ -255,7 +236,7 @@ Proof.
   unfold get_IfNamed, extend_program in H.
   repeat first [solve [discriminate] | match goal with
   | H : equal @ ?a ==> ?v |- _ =>
-    pose proof (eval_deterministic _ _ H _ (equal_eval a)); clear H; subst v
+    pose proof (eval_deterministic _ _ _ H _ (equal_eval a)); clear H; subst v
   | H : equal1 ?a @ ?b ==> ?v |- _ =>
     let HV := fresh "HV" in
     destruct (combination_eq_dec a b) as [E|E];
@@ -492,11 +473,10 @@ Lemma salary_here_preserves_typing : forall (AI : Decl) u U v,
  ontology_sound AI -> supports_salary AI -> supports_number AI -> supports_is_named AI ->
  infer AI @ u ==> Sm U -> salary_here @ u ==> v -> infer AI @ v ==> Sm U.
 Proof.
- intros AI u U v HA HS HN HT Hu He; eapply evaluation_preserves_typing;
- [exact HA|exact He|].
- eapply infer_expression_fork;
- [apply infer_expression_stem; apply infer_salary_here; assumption|
-  apply infer_expression_stem; exact Hu|apply type_app_salary_here; [assumption|assumption|exists u; exact Hu]].
+ intros AI u U v HA HS HN HT Hu He.
+ eapply (evaluation_preserves_typing _ _ _ _ _ _ _ HA He);
+ [apply infer_salary_here; assumption|
+  exact Hu|apply type_app_salary_here; [assumption|assumption|exists u; exact Hu]].
 Qed.
 
 (** ** Seek: a wrapped number for searching

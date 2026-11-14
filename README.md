@@ -34,10 +34,35 @@ The development has no `Admitted` proofs and no axioms. `Assumptions.v`,
 the last file built, runs `Print Assumptions` on every Theorem; each
 reports "Closed under the global context".
 
-Every Theorem of the paper is a Rocq Theorem of the same name, stated in
-the paper as proved here. Not every Rocq Theorem appears in the paper.
-Other results that the paper relies on are Lemmas, cited by name in the
-paper.
+Every Theorem of the paper is a Rocq Theorem of the same name. Not every
+Rocq Theorem appears in the paper. Other results that the paper relies on
+are Lemmas, cited by name in the paper.
+
+## Evaluation of applications
+
+The paper reads a tree as an expression: `Sm v` marks the value `v`, a fork
+applies one expression to another, and `e :: U` types an expression by the
+program `infer_expression`. Here there are only values, and application
+is a partial function on them: `f @ u ==> v` says that applying the value
+`f` to the value `u` gives the value `v` (`tree.v`). It is a relation
+because an application may diverge, and it is deterministic (Theorem 1).
+Applying to several arguments in turn is notation for the intermediate
+results: `f @ x @r y ==> v` is `exists w, f @ x ==> w /\ w @ y ==> v`, and
+`apps f xs ==> v` applies `f` to the list `xs`.
+
+The type of `f` applied to arguments `xs`, `has_type AI f xs T`, is type
+application of the types of `f` and of the arguments, in turn
+(`typing.v`). The paper's statements about an expression are stated about
+a value and the arguments it is applied to. Theorems 3 and 5 are about one
+application: if `f @ u ==> v`, `f : F`, `u : U` and `F # U ==> Sm T` then
+`v : T`; applying to further arguments repeats it (`typing_in_turn`). The tools of
+"Towards Typed Tooling" act on that value and its arguments (on the value
+applied, for optimisation; on all of them, for patching).
+
+Snapshots of evaluation are computations held as data, so `steps.v` keeps
+the paper's encoding of computations as trees: `enc f xs` encodes `f`
+applied to `xs`, `run` gives an encoded computation its meaning by
+application, and `infer_expression` types snapshots.
 
 ## Files
 
@@ -65,7 +90,7 @@ In build order, with the part of the paper each supports:
 | `paper_ontology.v` | A Sound Ontology |
 | `self_typing.v` | Concrete Types: self-typing, including `infer : infer` |
 | `customisation.v` | Querying a department; raising salaries |
-| `patching.v` | Patching a query program; patching expressions |
+| `patching.v` | Patching a query program; patching pending applications |
 | `optimisation.v` | Towards Typed Tooling: typed optimisation |
 | `steps.v` | Towards Typed Tooling: snapshots of evaluation |
 | `divergence.v` | Support: divergence and the truth-teller |

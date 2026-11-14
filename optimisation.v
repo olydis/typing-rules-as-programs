@@ -10,17 +10,17 @@
 (**********************************************************************)
 
 (** An abstract program is a tagged value [tagged[t,n] = t o label[n]],
-    and [tagged[t,n] @ v] evaluates exactly as [t @ v].  So in an
-    expression, an application whose function part is the quoted value
-    [Sm (tagged[t,n])] may use [Sm t] instead (repeatedly, while [t] is
-    itself tagged).  Likewise [decorate[f,w] @ v] evaluates exactly as
-    [f @ v], so a decorated function part, once untagged, may use [Sm f].
-    The optimisation recurses through application nodes and never looks
-    inside a value.
+    and [tagged[t,n] @ v] evaluates exactly as [t @ v].  So a value
+    [tagged[t,n]] applied to arguments [x1 ... xn] in turn may be replaced
+    by [t] (repeatedly, while [t] is itself tagged).  Likewise
+    [decorate[f,w] @ v] evaluates exactly as [f @ v], so a decorated value,
+    once untagged, may be replaced by [f].  Call the value applied the
+    head.  Only the head changes: the arguments stay as they are, and the
+    program applied may inspect them.
 
-    It preserves evaluation (in both directions) and, relative to a sound
-    declarations, expression typing: if [tagged[t,n]] has type
-    [F] and [F # U ==> Sm V], then the carrier [t] has a type [C] with
+    It preserves evaluation (in both directions) and, relative to sound
+    declarations, typing: if [tagged[t,n]] has type [F] and
+    [F # U ==> Sm V], then the carrier [t] has a type [C] with
     [C # U ==> Sm V].  This is the content of
     [infer_tagged_source_inv], [app_abstract_inv] and
     [plain_intro_sound], which also covers function introduction.
@@ -49,18 +49,8 @@ Definition undecorate (v : Combination) : Combination :=
   | _ => v
   end.
 
-(** [optimise_fn e] untags and then undecorates the function part of
-    every application node of the expression [e] whose function part is a
-    value. *)
-Fixpoint optimise_fn (e : Combination) : Combination :=
-  match e with
-  | Fk e1 e2 =>
-      Fk (match e1 with
-          | Sm v => Sm (undecorate (untag v))
-          | _ => optimise_fn e1
-          end) (optimise_fn e2)
-  | _ => e
-  end.
+(** [optimise_fn f] untags and then undecorates the head [f]. *)
+Definition optimise_fn (f : Combination) : Combination := undecorate (untag f).
 
 Lemma untag_tagged : forall t n, untag ('tagged[t,n]) = untag t.
 Proof. reflexivity. Qed.
@@ -102,44 +92,19 @@ Qed.
 
 (** * Evaluation of applications *)
 
-Lemma value_app_eval_iff : forall v1 e2 v,
-  Fk (Sm v1) e2 ==> v <-> exists v2, e2 ==> v2 /\ v1 @ v2 ==> v.
-Proof.
-  intros v1 e2 v; split.
-  - intro H; destruct e2 as [|u|a b].
-    + inversion H.
-    + exists u; split; [apply eval_val|exact H].
-    + inversion H; subst; eauto.
-  - intros [v2 [H2 H]]; destruct e2 as [|u|a b].
-    + inversion H2.
-    + inversion H2; subst; exact H.
-    + eapply eval_appr; eassumption.
-Qed.
-
-Lemma app_eval_iff : forall e1 e2 v,
-  Fk e1 e2 ==> v <->
-  exists v1 v2, e1 ==> v1 /\ e2 ==> v2 /\ v1 @ v2 ==> v.
-Proof.
-  intros e1 e2 v; split; [apply eval_pair_inv|].
-  intros [v1 [v2 [H1 [H2 H]]]]; eapply eval_pair; eassumption.
-Qed.
-
 (** [tagged[t,n] @ u] evaluates exactly as [t @ u]. *)
 Lemma tagged_app_eval_iff : forall t n u v,
   'tagged[t,n] @ u ==> v <-> t @ u ==> v.
 Proof.
   intros t n u v; split; intro H.
-  - inversion H; subst.
-    apply app_eval_iff in H4.
-    destruct H4 as [v1 [v2 [H1 [H2 H3]]]].
-    inversion H1; subst.
-    assert (v2 = u) by (eapply eval_deterministic; [exact H2|evaluate]).
-    subst; exact H3.
-  - apply eval_s; apply app_eval_iff.
-    exists t, u; repeat split; [evaluate|evaluate|exact H].
+  - apply eval_s_inv in H; destruct H as [a [b [Ha [Hb H]]]].
+    pose proof (eval_deterministic _ _ _ Ha _ (eval_k t u)) as ->.
+    assert (b = u) by (eapply eval_deterministic; [exact Hb|evaluate]).
+    subst; exact H.
+  - apply tagged_eval; exact H.
 Qed.
 
-(** Untagging the function value does not change any application. *)
+(** Untagging the head does not change any application. *)
 Lemma untag_app_eval_iff : forall v u w,
   v @ u ==> w <-> untag v @ u ==> w.
 Proof.
@@ -153,10 +118,8 @@ Lemma decorate_app_eval_iff : forall f w x r,
   'decorate[f,w] @ x ==> r <-> f @ x ==> r.
 Proof.
   intros f w x r; split; intro H.
-  - apply wait_eval_inv in H.
-    apply app_eval_iff in H; destruct H as [v1 [v2 [H1 [H2 H3]]]].
-    pose proof (eval_deterministic _ _ H1 _ (eval_k f w)) as ->.
-    inversion H2; subst; exact H3.
+  - apply wait_eval_inv, eval_appl_inv in H; destruct H as [g [Hg H]].
+    pose proof (eval_deterministic _ _ _ Hg _ (eval_k f w)) as ->; exact H.
   - apply decorate_apply; exact H.
 Qed.
 
@@ -177,34 +140,37 @@ Qed.
 
 (** * Optimisation preserves evaluation *)
 
-Theorem optimise_preserves_evaluation : forall e v,
-  e ==> v <-> optimise_fn e ==> v.
+Theorem optimise_preserves_evaluation : forall f x xs v,
+  apps f (x :: xs) ==> v <-> apps (optimise_fn f) (x :: xs) ==> v.
 Proof.
-  induction e as [|u _|e1 IH1 e2 IH2]; intro v; cbn [optimise_fn];
-    try reflexivity.
-  destruct e1 as [|u|a b].
-  - split; intro H; inversion H.
-  - rewrite !value_app_eval_iff; split; intros [v2 [H2 H]];
-      exists v2; split;
-      [apply IH2; exact H2|apply (proj1 (optimise_value_app_eval_iff _ _ _)); exact H|
-       apply IH2; exact H2|apply (proj2 (optimise_value_app_eval_iff _ _ _)); exact H].
-  - rewrite !app_eval_iff; split; intros [v1 [v2 [H1 [H2 H]]]];
-      exists v1, v2; repeat split;
-      [apply IH1; exact H1|apply IH2; exact H2|exact H|
-       apply IH1; exact H1|apply IH2; exact H2|exact H].
+  intro f; apply apps_head_iff; apply optimise_value_app_eval_iff.
 Qed.
 
-(** * Optimisation preserves expression typing *)
+(** * Optimisation preserves typing *)
 
 Section OptimiseTyping.
 Variable AI : Decl.
 Local Abbreviation tapp := (typing.type_app AI).
-Local Notation "F # U" := (tapp @ F @r U) (at level 45, left associativity).
+Local Notation "F # U ==> T" := (tapp @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 
 (** The function nametag [fun_nm] = [Lf] is concrete, so it is its own type. *)
 Lemma infer_fun_nm : inf AI @ fun_nm ==> Sm fun_nm.
 Proof. unfold fun_nm; exact (infer_leaf AI). Qed.
 
+(** A head whose type applies to the type of the first argument as the
+    type of [f] does may replace [f]: the later arguments meet the same
+    types. *)
+Lemma head_typing : forall f g,
+  (forall F U V, inf AI @ f ==> Sm F -> F # U ==> Sm V ->
+     exists G, inf AI @ g ==> Sm G /\ G # U ==> Sm V) ->
+  forall x xs T, has_type AI f (x :: xs) T -> has_type AI g (x :: xs) T.
+Proof.
+  intros f g Hg x xs; refine (has_type_prefix AI f g [x] [x] _ xs); intros T H.
+  destruct (has_type_ap_inv _ _ _ _ H) as [F [U [Hf [Hu HFU]]]].
+  destruct (Hg F U T Hf HFU) as [G [HG HGU]].
+  exact (has_type_ap _ _ _ _ _ _ HG Hu HGU).
+Qed.
 
 (** With one-round soundness the carrier agrees at every argument type. *)
 Lemma tagged_carrier_typing_plain : forall t n F U V,
@@ -254,14 +220,14 @@ Proof.
   intros F W U V H.
   destruct (S_success_inv ('S2['K1 ('K1 F),'K1 W]) 'I U V
     ltac:(intros; discriminate) ltac:(reject_name) H) as [A [B [HA [HB HAB]]]].
-  pose proof (eval_deterministic _ _ HB _ (app_I AI U)) as HBeq.
+  pose proof (applied_deterministic _ _ _ HB _ (app_I AI U)) as HBeq.
   inversion HBeq; subst B; clear HB HBeq.
   destruct (S_success_inv ('K1 ('K1 F)) ('K1 W) U A
     ltac:(intros; discriminate) ltac:(reject_name) HA) as [A1 [B1 [HA1 [HB1 HAB1]]]].
-  pose proof (eval_deterministic _ _ HA1 _ (app_K AI ('K1 F) U)) as E1.
-  pose proof (eval_deterministic _ _ HB1 _ (app_K AI W U)) as E2.
+  pose proof (applied_deterministic _ _ _ HA1 _ (app_K AI ('K1 F) U)) as E1.
+  pose proof (applied_deterministic _ _ _ HB1 _ (app_K AI W U)) as E2.
   inversion E1; inversion E2; subst A1 B1.
-  pose proof (eval_deterministic _ _ HAB1 _ (app_K AI F W)) as E3.
+  pose proof (applied_deterministic _ _ _ HAB1 _ (app_K AI F W)) as E3.
   inversion E3; subst A; exact HAB.
 Qed.
 
@@ -276,34 +242,23 @@ Proof.
   - exists D; split; assumption.
 Qed.
 
-(** Untagging the function part of an application is sound: under a sound
+(** Untagging the head of an application is sound: under sound
     declarations every carrier agrees with its eliminator at every argument
-    type, so no condition on the expression is needed. *)
-Lemma optimise_preserves_expression_typing : forall e T,
+    type, so no condition on the application is needed. *)
+Lemma optimise_preserves_expression_typing : forall f x xs T,
   ontology_sound_by_typing AI ->
-  infer_expression AI @ e ==> Sm T ->
-  infer_expression AI @ (optimise_fn e) ==> Sm T.
+  has_type AI f (x :: xs) T ->
+  has_type AI (optimise_fn f) (x :: xs) T.
 Proof.
-  intros e; induction e as [|u _|e1 IH1 e2 IH2]; intros T Hsound H;
-    cbn [optimise_fn]; try exact H.
+  intros f x xs T Hsound; apply head_typing; intros F U V HF Happ.
   pose proof (ontology_sound_by_typing_plain AI Hsound) as Hp.
-  destruct (infer_expression_fork_inv AI e1 e2 T H)
-    as [T1 [T2 [H1 [H2 Happ]]]].
-  destruct e1 as [|u|a b].
-  - pose proof (eval_deterministic _ _ H1 _ (infer_expression_leaf AI));
-      discriminate.
-  - apply infer_expression_stem_inv in H1.
-    destruct (untag_typing_plain u T1 T2 T Hp H1 Happ) as [F' [HF' HF'app]].
-    destruct (undecorate_typing _ _ _ _ HF' HF'app) as [F [HF HFapp]].
-    eapply infer_expression_fork;
-      [apply infer_expression_stem; exact HF|exact (IH2 T2 Hsound H2)|exact HFapp].
-  - eapply infer_expression_fork;
-      [exact (IH1 T1 Hsound H1)|exact (IH2 T2 Hsound H2)|exact Happ].
+  destruct (untag_typing_plain _ F U V Hp HF Happ) as [F' [HF' HF'app]].
+  exact (undecorate_typing _ _ _ _ HF' HF'app).
 Qed.
 
 (** ** Untagging with some carriers excluded
 
-    A declarations sound for values need not be sound by typing: the
+    Declarations sound for values need not be sound by typing: the
     one-level carriers of Query and Update, their choice carriers, and
     the name tests of IsNamed are not.  Untagging remains sound at every tag
     whose name is not in the list [Bs], and at every tag whose carrier is
@@ -331,15 +286,10 @@ Fixpoint tags_avoid (Bs : list Combination) (v : Combination) : bool :=
   | _ => true
   end.
 
-(** [heads_avoid Bs e]: the same for every function part that
-    [optimise_fn] untags. *)
-Fixpoint heads_avoid (Bs : list Combination) (e : Combination) : bool :=
-  match e with
-  | Fk e1 e2 =>
-      (match e1 with Sm v => tags_avoid Bs v | _ => heads_avoid Bs e1 end)
-        && heads_avoid Bs e2
-  | _ => true
-  end.
+(** [heads_avoid Bs f]: the same for the head [f] that [optimise_fn]
+    untags. *)
+Definition heads_avoid (Bs : list Combination) (f : Combination) : bool :=
+  tags_avoid Bs f.
 
 Lemma untag_typing_but : forall Bs v F U V,
   plain_intro_sound_but Bs -> List.forallb tag_free Bs = true -> tags_avoid Bs v = true ->
@@ -364,26 +314,14 @@ Proof.
     exact (IH C U V Hp HB Ht HC HCapp).
 Qed.
 
-Lemma optimise_preserves_expression_typing_but : forall B e T,
+Lemma optimise_preserves_expression_typing_but : forall B f x xs T,
   plain_intro_sound_but B -> List.forallb tag_free B = true ->
-  infer_expression AI @ e ==> Sm T -> heads_avoid B e = true ->
-  infer_expression AI @ (optimise_fn e) ==> Sm T.
+  has_type AI f (x :: xs) T -> heads_avoid B f = true ->
+  has_type AI (optimise_fn f) (x :: xs) T.
 Proof.
-  intros B e; induction e as [|u _|e1 IH1 e2 IH2]; intros T Hp HB H Ha;
-    cbn [optimise_fn]; try exact H.
-  cbn [heads_avoid] in Ha; apply andb_prop in Ha; destruct Ha as [Ha1 Ha2].
-  destruct (infer_expression_fork_inv AI e1 e2 T H)
-    as [T1 [T2 [H1 [H2 Happ]]]].
-  destruct e1 as [|u|a b].
-  - pose proof (eval_deterministic _ _ H1 _ (infer_expression_leaf AI));
-      discriminate.
-  - apply infer_expression_stem_inv in H1.
-    destruct (untag_typing_but B u T1 T2 T Hp HB Ha1 H1 Happ) as [F' [HF' HF'app]].
-    destruct (undecorate_typing _ _ _ _ HF' HF'app) as [F [HF HFapp]].
-    eapply infer_expression_fork;
-      [apply infer_expression_stem; exact HF|exact (IH2 T2 Hp HB H2 Ha2)|exact HFapp].
-  - eapply infer_expression_fork;
-      [exact (IH1 T1 Hp HB H1 Ha1)|exact (IH2 T2 Hp HB H2 Ha2)|exact Happ].
+  intros B f x xs T Hp HB H Ha; revert H; apply head_typing; intros F U V HF Happ.
+  destruct (untag_typing_but B _ F U V Hp HB Ha HF Happ) as [F' [HF' HF'app]].
+  exact (undecorate_typing _ _ _ _ HF' HF'app).
 Qed.
 
 End OptimiseTyping.
@@ -507,41 +445,13 @@ Proof.
     unfold undecorate_program; cbv -[get_decorate]; evaluate.
 Qed.
 
-(** [optimise @ e]: a leaf or a stem is returned unchanged; a fork
-    [Fk e1 e2] becomes [Fk e1' (optimise @ e2)], where [e1'] is [e1] for a
-    leaf, [Sm (undecorate (untag v))] for a stem [Sm v], and
-    [optimise @ e1] for a fork. *)
-Definition optimise_body_package :
-  { t | to_tree
-    (\"rec"
-       (''triage [
-          Val Lf,
-          Val Lf,
-          \"e1" (\"e2"
-            (Val Lf
-               @@ (''triage [
-                     Val Lf,
-                     \"u" (Val Lf @@ (Val undecorate_program
-                                        @@ (Val untag_program @@ Ref "u"))),
-                     \"a" (\"b" (Ref "rec" @@ (Val Lf @@ Ref "a" @@ Ref "b")))]
-                   @@ Ref "e1")
-               @@ (Ref "rec" @@ Ref "e2"))) ])) = t }.
-Proof. eexists; simpl; reflexivity. Defined.
+(** [optimise @ v] untags and then undecorates [v]; applied to the head of
+    an application, it computes the head of [optimise_fn]. *)
+Definition optimise := undecorate_program 'C untag_program.
 
-Definition optimise_body := Eval cbn in proj1_sig optimise_body_package.
-Definition optimise := Z optimise_body.
-
-Lemma optimise_eval : forall e, optimise @ e ==> optimise_fn e.
+Lemma optimise_eval : forall v, optimise @ v ==> undecorate (untag v).
 Proof.
-  induction e as [|u _|e1 IH1 e2 IH2].
-  - unfold optimise; eapply Z_unfold; cbv -[untag_program undecorate_program Z]; evaluate.
-  - unfold optimise; eapply Z_unfold; cbv -[untag_program undecorate_program Z]; evaluate.
-  - destruct e1 as [|u|a b]; cbn [optimise_fn].
-    + unfold optimise; eapply Z_unfold; cbv -[untag_program undecorate_program Z]; evaluate.
-    + pose proof (untag_program_eval u) as Hu.
-      pose proof (undecorate_program_eval (untag u)) as Hd.
-      unfold optimise; eapply Z_unfold; cbv -[untag_program undecorate_program Z]; evaluate.
-    + unfold optimise; eapply Z_unfold; cbv -[untag_program undecorate_program Z]; evaluate.
+  intro v; eapply eval_c; [apply untag_program_eval|apply undecorate_program_eval].
 Qed.
 
 Lemma untag_program_concrete : concrete untag_program.
@@ -555,42 +465,40 @@ Proof. apply concreteb_sound; vm_compute; reflexivity. Qed.
 
 (** * The running example
 
-    The pending query [paid_over_57 @ department_2025]
-    applies a tagged abstract program.  Optimisation drops its tag, and
-    the optimised expression has the same type [List[Employee]] and the
-    same value [paid_57_in_2025]. *)
+    The query [paid_over_57] is a tagged abstract program.  Optimisation
+    drops its tag, and applied to [department_2025] the optimised query
+    has the same type [List[Employee]] and the same value
+    [paid_57_in_2025]. *)
 
 
 (** * The Boolean example
 
-    [tt = tagged[fst, bool_nm]], so optimisation turns [tt @ (u*v)] into
-    [fst @ (u*v)].  At the typed instance [u = ff] and [v = tt] (both of
-    type [Bool]), both expressions have type [Bool] and value [ff]. *)
+    [tt = tagged[fst, bool_nm]], so optimisation turns [tt] into [fst].  At the typed instance [u = ff] and [v = tt] (both of
+    type [Bool]), both applications have type [Bool] and value [ff]. *)
 
 Lemma optimised_boolean_example :
-  optimise_fn ('tt @ ('ff '* 'tt)) = 'fst @ ('ff '* 'tt) /\
-  infer_expression paper_ontology @ ('tt @ ('ff '* 'tt)) ==> Sm ('Bool) /\
-  infer_expression paper_ontology @ ('fst @ ('ff '* 'tt)) ==> Sm ('Bool) /\
+  optimise_fn 'tt = 'fst /\
+  has_type paper_ontology 'tt ['ff '* 'tt] ('Bool) /\
+  has_type paper_ontology 'fst ['ff '* 'tt] ('Bool) /\
   'tt @ ('ff '* 'tt) ==> 'ff /\
   'fst @ ('ff '* 'tt) ==> 'ff.
 Proof.
   assert (Htyped :
-    infer_expression paper_ontology @ ('tt @ ('ff '* 'tt)) ==> Sm ('Bool)).
-  { eapply infer_expression_fork.
-    - apply infer_expression_stem; apply tt_infer;
+    has_type paper_ontology 'tt ['ff '* 'tt] ('Bool)).
+  { has_type_intro.
+    - apply tt_infer;
         exact paper_ontology_supports_booleans.
-    - apply infer_expression_stem; apply infer_product_value;
+    - apply infer_product_value;
         [apply ff_infer|apply tt_infer];
         exact paper_ontology_supports_booleans.
     - apply type_app_abstract; apply bool_eliminator_some. }
   assert (Hfst : 'fst @ ('ff '* 'tt) ==> 'ff) by apply fst_pair.
-  assert (Hopt : optimise_fn ('tt @ ('ff '* 'tt)) = 'fst @ ('ff '* 'tt))
-    by reflexivity.
+  assert (Hopt : optimise_fn 'tt = 'fst) by reflexivity.
   split; [exact Hopt|split; [exact Htyped|split; [|split]]].
-  - rewrite <- Hopt; apply (optimise_preserves_expression_typing_but paper_ontology paper_excluded _ _
+  - rewrite <- Hopt; apply (optimise_preserves_expression_typing_but paper_ontology paper_excluded _ _ _ _
       paper_plain_intro_sound_excl paper_excluded_tag_free Htyped);
       vm_compute; reflexivity.
-  - apply (proj2 (optimise_preserves_evaluation _ _)); rewrite Hopt;
+  - apply (proj2 (optimise_preserves_evaluation 'tt ('ff '* 'tt) [] 'ff)); rewrite Hopt;
       exact Hfst.
   - exact Hfst.
 Qed.
@@ -598,7 +506,7 @@ Qed.
 (** * The function example
 
     [typed_neg = lam[neg,tt] = tagged[decorate[neg,tt], fun_nm]], so
-    optimisation turns [typed_neg @ tt] into [neg @ tt].
+    optimisation turns [typed_neg] into [neg].
     Both have type [Bool] and value [ff]. *)
 
 
@@ -610,22 +518,22 @@ Unset Default Proof Using.
 (**********************************************************************)
 
 (** Each transformation follows the discipline of [optimise_fn]: it
-    recurses through application nodes of an expression and never looks
-    inside a value.
+    replaces the head, or the head together with its first argument, and
+    never looks inside a value.
 
-    - [project_fn] replaces [fst @ (u*v)] by the value [u] and
-      [snd @ (u*v)] by the value [v].
-    - [unghost_fn] replaces the function part [decorate[f,w]] of an
-      application by [f].
-    - [optimise_all_fn] optimises, then unghosts, then projects; since
-      [optimise_fn] already undecorates once, [unghost_fn] removes only
-      a second decoration.
+    - A projection [fst] or [snd] applied to an actual pair [u*v]
+      ([project_redex]) is replaced by its value [u] (or [v]), which the
+      remaining arguments apply.
+    - [unghost_fn] undecorates the head.
+    - [optimise_all_fn] optimises, then unghosts; since [optimise_fn]
+      already undecorates once, [unghost_fn] removes only a second
+      decoration.  A projection it exposes is then replaced.
 
     Evaluation is preserved in both directions, with no hypotheses.
-    Expression typing is preserved by [project_fn] and [unghost_fn] with
-    no hypotheses (pairs and decorations are typed by the concrete
-    rules); [optimise_all_fn] inherits the soundness hypothesis
-    [ontology_sound] from [optimise_fn]. *)
+    Typing is preserved by projection and by [unghost_fn] with no
+    hypotheses (pairs and decorations are typed by the concrete rules);
+    [optimise_all_fn] inherits the soundness hypothesis
+    [ontology_sound_by_typing] from [optimise_fn]. *)
 
 From Stdlib Require Import String Lia PeanoNat.
 From TreeTyping Require Import tree typing soundness booleans.
@@ -635,40 +543,30 @@ Set Default Proof Using "Type".
 
 (** * E4: projections on actual pairs *)
 
-(** [project_redex e1 e2] recognises the application of [fst] or [snd]
-    to an actual pair value. *)
-Definition project_redex (e1 e2 : Combination) : option Combination :=
-  match e1, e2 with
-  | Sm 'fst, Sm (u '* v) => Some u
-  | Sm 'snd, Sm (u '* v) => Some v
+(** [project_redex f u] recognises the application of [fst] or [snd]
+    to an actual pair value, and gives its value. *)
+Definition project_redex (f u : Combination) : option Combination :=
+  match f, u with
+  | 'fst, a '* b => Some a
+  | 'snd, a '* b => Some b
   | _, _ => None
   end.
 
-Fixpoint project_fn (e : Combination) : Combination :=
-  match e with
-  | Fk e1 e2 =>
-      match project_redex e1 e2 with
-      | Some w => Sm w
-      | None => Fk (project_fn e1) (project_fn e2)
-      end
-  | _ => e
-  end.
-
-Lemma project_redex_some : forall e1 e2 w,
-  project_redex e1 e2 = Some w ->
-  (exists v, e1 = Sm 'fst /\ e2 = Sm (w '* v)) \/
-  (exists u, e1 = Sm 'snd /\ e2 = Sm (u '* w)).
+Lemma project_redex_some : forall f u w,
+  project_redex f u = Some w ->
+  (exists v, f = 'fst /\ u = w '* v) \/
+  (exists v, f = 'snd /\ u = v '* w).
 Proof.
-  intros e1 e2 w H; unfold project_redex in H;
+  intros f u w H; unfold project_redex in H;
   repeat match type of H with
          | context [match ?x with _ => _ end] => destruct x
          end; try discriminate; inversion H; subst; eauto.
 Qed.
 
-Lemma project_redex_eval : forall e1 e2 w v,
-  project_redex e1 e2 = Some w -> (Fk e1 e2 ==> v <-> v = w).
+Lemma project_redex_eval : forall f u w v,
+  project_redex f u = Some w -> (f @ u ==> v <-> v = w).
 Proof.
-  intros e1 e2 w v H.
+  intros f u w v H.
   destruct (project_redex_some _ _ _ H) as [[y [-> ->]]|[x [-> ->]]];
     split; intro Hv.
   - eapply eval_deterministic; [exact Hv|apply fst_pair].
@@ -677,19 +575,14 @@ Proof.
   - subst; apply snd_pair.
 Qed.
 
-Lemma project_preserves_evaluation : forall e v,
-  e ==> v <-> project_fn e ==> v.
+Lemma project_preserves_evaluation : forall f u xs w v,
+  project_redex f u = Some w ->
+  apps f (u :: xs) ==> v <-> apps w xs ==> v.
 Proof.
-  induction e as [|u _|e1 IH1 e2 IH2]; intro v; cbn [project_fn];
-    try reflexivity.
-  destruct (project_redex e1 e2) as [w|] eqn:Hr.
-  - rewrite (project_redex_eval _ _ _ _ Hr); split; intro H.
-    + subst; apply eval_val.
-    + inversion H; reflexivity.
-  - rewrite !app_eval_iff; split; intros [v1 [v2 [H1 [H2 H]]]];
-      exists v1, v2; repeat split;
-      [apply IH1; exact H1|apply IH2; exact H2|exact H|
-       apply IH1; exact H1|apply IH2; exact H2|exact H].
+  intros f u xs w v Hr; split; intro H.
+  - apply apps_cons_inv in H as [w' [H1 H2]].
+    apply (project_redex_eval _ _ _ _ Hr) in H1; subst; exact H2.
+  - eapply apps_cons_intro; [apply (project_redex_eval _ _ _ _ Hr); reflexivity|exact H].
 Qed.
 
 Section ProjectTyping.
@@ -722,7 +615,7 @@ Proof.
   destruct (infer_fork_inv _ _ _ _ Hd) as [L [U [_ [Hu _]]]].
   destruct (infer_fork_inv _ _ _ _ Hb) as [L' [V [_ [Hv _]]]].
   exists U, V; repeat split; try assumption.
-  pose proof (eval_deterministic _ _ H _ (infer_pair u v U V Hu Hv)) as Heq.
+  pose proof (eval_deterministic _ _ _ H _ (infer_pair u v U V Hu Hv)) as Heq.
   inversion Heq; reflexivity.
 Qed.
 
@@ -745,136 +638,91 @@ Proof.
   apply app_K.
 Qed.
 
-(** The key step: a typed projection redex has the type of its result. *)
-Lemma project_redex_typing : forall e1 e2 w T,
-  project_redex e1 e2 = Some w ->
-  infer_expression AI @ Fk e1 e2 ==> Sm T ->
+
+(** The key step: a typed projection redex has the type of its value. *)
+Lemma project_redex_typing : forall f u w T,
+  project_redex f u = Some w ->
+  has_type AI f [u] T ->
   inf @ w ==> Sm T.
 Proof.
-  intros e1 e2 w T Hr H.
-  destruct (infer_expression_fork_inv AI e1 e2 T H)
-    as [T1 [T2 [H1 [H2 Happ]]]].
+  intros f u w T Hr H.
+  destruct (has_type_ap_inv _ _ _ _ H) as [T1 [T2 [H1 [H2 Happ]]]].
   destruct (project_redex_some _ _ _ Hr) as [[y [-> ->]]|[x [-> ->]]];
-    apply infer_expression_stem_inv in H1;
-    apply infer_expression_stem_inv in H2;
     destruct (infer_pair_inv _ _ _ H2) as [U [V [Hu [Hv ->]]]].
-  - pose proof (eval_deterministic _ _ H1 _
+  - pose proof (eval_deterministic _ _ _ H1 _
       (infer_tag_free AI 'fst ltac:(reflexivity))) as HT1;
     inversion HT1; subst T1.
-    pose proof (eval_deterministic _ _ Happ _ (fst_pair_type U V)) as HT.
+    pose proof (applied_deterministic _ _ _ Happ _ (fst_pair_type U V)) as HT.
     inversion HT; subst; exact Hu.
-  - pose proof (eval_deterministic _ _ H1 _
+  - pose proof (eval_deterministic _ _ _ H1 _
       (infer_tag_free AI 'snd ltac:(reflexivity))) as HT1;
     inversion HT1; subst T1.
-    pose proof (eval_deterministic _ _ Happ _ (snd_pair_type U V)) as HT.
+    pose proof (applied_deterministic _ _ _ Happ _ (snd_pair_type U V)) as HT.
     inversion HT; subst; exact Hv.
 Qed.
 
-Lemma project_preserves_expression_typing : forall e T,
-  infer_expression AI @ e ==> Sm T ->
-  infer_expression AI @ (project_fn e) ==> Sm T.
+Lemma project_preserves_expression_typing : forall f u xs w T,
+  project_redex f u = Some w ->
+  has_type AI f (u :: xs) T ->
+  has_type AI w xs T.
 Proof.
-  intros e; induction e as [|u _|e1 IH1 e2 IH2]; intros T H;
-    cbn [project_fn]; try exact H.
-  destruct (project_redex e1 e2) as [w|] eqn:Hr.
-  - apply infer_expression_stem; eapply project_redex_typing; eassumption.
-  - destruct (infer_expression_fork_inv AI e1 e2 T H)
-      as [T1 [T2 [H1 [H2 Happ]]]].
-    eapply infer_expression_fork;
-      [exact (IH1 T1 H1)|exact (IH2 T2 H2)|exact Happ].
+  intros f u xs w T Hr; refine (has_type_prefix AI f w [u] [] _ xs T).
+  intros T' H; exact (project_redex_typing f u w T' Hr H).
 Qed.
 
 End ProjectTyping.
 
 (** * E5: ghost erasure *)
 
-(** [unghost_fn e] undecorates the function part of every application
-    node of [e] whose function part is a value. *)
-Fixpoint unghost_fn (e : Combination) : Combination :=
-  match e with
-  | Fk e1 e2 =>
-      Fk (match e1 with
-          | Sm v => Sm (undecorate v)
-          | _ => unghost_fn e1
-          end) (unghost_fn e2)
-  | _ => e
-  end.
+(** [unghost_fn f] undecorates the head [f]. *)
+Definition unghost_fn (f : Combination) : Combination := undecorate f.
 
-Lemma unghost_preserves_evaluation : forall e v,
-  e ==> v <-> unghost_fn e ==> v.
-Proof.
-  induction e as [|u _|e1 IH1 e2 IH2]; intro v; cbn [unghost_fn];
-    try reflexivity.
-  destruct e1 as [|u|a b].
-  - split; intro H; inversion H.
-  - rewrite !value_app_eval_iff; split; intros [v2 [H2 H]];
-      exists v2; split;
-      [apply IH2; exact H2|apply (proj1 (undecorate_app_eval_iff _ _ _)); exact H|
-       apply IH2; exact H2|apply (proj2 (undecorate_app_eval_iff _ _ _)); exact H].
-  - rewrite !app_eval_iff; split; intros [v1 [v2 [H1 [H2 H]]]];
-      exists v1, v2; repeat split;
-      [apply IH1; exact H1|apply IH2; exact H2|exact H|
-       apply IH1; exact H1|apply IH2; exact H2|exact H].
-Qed.
+Lemma unghost_preserves_evaluation : forall f x xs v,
+  apps f (x :: xs) ==> v <-> apps (unghost_fn f) (x :: xs) ==> v.
+Proof. intro f; apply apps_head_iff; apply undecorate_app_eval_iff. Qed.
 
 Section UnghostTyping.
 Variable AI : Decl.
-Local Abbreviation tapp := (typing.type_app AI).
-Local Abbreviation inf := (infer AI).
 
-Lemma unghost_preserves_expression_typing : forall e T,
-  infer_expression AI @ e ==> Sm T ->
-  infer_expression AI @ (unghost_fn e) ==> Sm T.
+Lemma unghost_preserves_expression_typing : forall f x xs T,
+  has_type AI f (x :: xs) T ->
+  has_type AI (unghost_fn f) (x :: xs) T.
 Proof.
-  intros e; induction e as [|u _|e1 IH1 e2 IH2]; intros T H;
-    cbn [unghost_fn]; try exact H.
-  destruct (infer_expression_fork_inv AI e1 e2 T H)
-    as [T1 [T2 [H1 [H2 Happ]]]].
-  destruct e1 as [|u|a b].
-  - pose proof (eval_deterministic _ _ H1 _ (infer_expression_leaf AI));
-      discriminate.
-  - apply infer_expression_stem_inv in H1.
-    destruct (undecorate_typing AI u T1 T2 T H1 Happ) as [F [HF HFapp]].
-    eapply infer_expression_fork;
-      [apply infer_expression_stem; exact HF|exact (IH2 T2 H2)|exact HFapp].
-  - eapply infer_expression_fork;
-      [exact (IH1 T1 H1)|exact (IH2 T2 H2)|exact Happ].
+  intros f x xs T; apply head_typing; intros F U V HF Happ.
+  exact (undecorate_typing AI _ _ _ _ HF Happ).
 Qed.
 
 End UnghostTyping.
 
 (** * E8: composition *)
 
-Definition optimise_all_fn (e : Combination) : Combination :=
-  project_fn (unghost_fn (optimise_fn e)).
+Definition optimise_all_fn (f : Combination) : Combination :=
+  unghost_fn (optimise_fn f).
 
-Lemma optimise_all_preserves_evaluation : forall e v,
-  e ==> v <-> optimise_all_fn e ==> v.
+Lemma optimise_all_preserves_evaluation : forall f x xs v,
+  apps f (x :: xs) ==> v <-> apps (optimise_all_fn f) (x :: xs) ==> v.
 Proof.
-  intros e v; unfold optimise_all_fn.
-  rewrite optimise_preserves_evaluation, unghost_preserves_evaluation,
-    project_preserves_evaluation; reflexivity.
+  intros f x xs v; unfold optimise_all_fn.
+  rewrite optimise_preserves_evaluation, unghost_preserves_evaluation; reflexivity.
 Qed.
 
-Lemma optimise_all_preserves_expression_typing : forall (AI : Decl) e T,
+Lemma optimise_all_preserves_expression_typing : forall (AI : Decl) f x xs T,
   ontology_sound_by_typing AI ->
-  infer_expression AI @ e ==> Sm T ->
-  infer_expression AI @ (optimise_all_fn e) ==> Sm T.
+  has_type AI f (x :: xs) T ->
+  has_type AI (optimise_all_fn f) (x :: xs) T.
 Proof.
-  intros AI e T Hsound H; unfold optimise_all_fn.
-  apply project_preserves_expression_typing,
-    unghost_preserves_expression_typing,
+  intros AI f x xs T Hsound H; unfold optimise_all_fn.
+  apply unghost_preserves_expression_typing,
     optimise_preserves_expression_typing; assumption.
 Qed.
 
-Lemma optimise_all_preserves_expression_typing_but : forall (AI : Decl) B e T,
+Lemma optimise_all_preserves_expression_typing_but : forall (AI : Decl) B f x xs T,
   plain_intro_sound_but AI B -> List.forallb tag_free B = true ->
-  infer_expression AI @ e ==> Sm T -> heads_avoid B e = true ->
-  infer_expression AI @ (optimise_all_fn e) ==> Sm T.
+  has_type AI f (x :: xs) T -> heads_avoid B f = true ->
+  has_type AI (optimise_all_fn f) (x :: xs) T.
 Proof.
-  intros AI B e T Hp HB H Ha; unfold optimise_all_fn.
-  apply project_preserves_expression_typing,
-    unghost_preserves_expression_typing.
+  intros AI B f x xs T Hp HB H Ha; unfold optimise_all_fn.
+  apply unghost_preserves_expression_typing.
   eapply optimise_preserves_expression_typing_but; eassumption.
 Qed.
 
@@ -882,63 +730,62 @@ Qed.
 
 Local Transparent typed_neg.
 
-(** [tt @ (u*v)] becomes [fst @ (u*v)] by untagging, and then [u]. *)
+(** [tt] becomes [fst] by untagging, and stays so; applied to [u*v], the
+    projection gives [u], which any further argument applies. *)
 Lemma optimise_all_tt_pair : forall u v,
-  optimise_fn ('tt @ (u '* v)) = 'fst @ (u '* v) /\
-  optimise_all_fn ('tt @ (u '* v)) = Sm u.
-Proof. intros; split; reflexivity. Qed.
+  optimise_fn 'tt = 'fst /\
+  optimise_all_fn 'tt = 'fst /\
+  project_redex (optimise_all_fn 'tt) (u '* v) = Some u.
+Proof. intros; split; [|split]; reflexivity. Qed.
 
 Lemma typed_neg_tt_typed :
-  infer_expression paper_ontology @ (typed_neg @ 'tt) ==> Sm ('Bool).
+  has_type paper_ontology typed_neg ['tt] ('Bool).
 Proof.
-  eapply infer_expression_fork.
-  - apply infer_expression_stem;
-      apply typed_neg_infer; exact paper_ontology_supports_booleans.
-  - apply infer_expression_stem;
-      apply tt_infer; exact paper_ontology_supports_booleans.
+  has_type_intro.
+  - apply typed_neg_infer; exact paper_ontology_supports_booleans.
+  - apply tt_infer; exact paper_ontology_supports_booleans.
   - apply app_abstract; apply funty_eliminator_eval.
 Qed.
 
-(** The paper's example: [typed_neg @ tt] becomes [neg @ tt], with the
-    same type [Bool] and the same value [ff]. *)
+(** The paper's example: [typed_neg] becomes [neg]; applied to [tt] both
+    have type [Bool] and value [ff]. *)
 Lemma optimised_neg_example :
-  optimise_fn (typed_neg @ 'tt) = neg @ 'tt /\
-  optimise_all_fn (typed_neg @ 'tt) = neg @ 'tt /\
-  infer_expression paper_ontology @ optimise_all_fn (typed_neg @ 'tt) ==>
-    Sm ('Bool) /\
+  optimise_fn typed_neg = neg /\
+  optimise_all_fn typed_neg = neg /\
+  has_type paper_ontology (optimise_all_fn typed_neg) ['tt] ('Bool) /\
   typed_neg @ 'tt ==> 'ff /\
-  optimise_all_fn (typed_neg @ 'tt) ==> 'ff.
+  optimise_all_fn typed_neg @ 'tt ==> 'ff.
 Proof.
-  assert (Heq : optimise_all_fn (typed_neg @ 'tt) = neg @ 'tt)
-    by reflexivity.
+  assert (Heq : optimise_all_fn typed_neg = neg) by reflexivity.
   split; [reflexivity|split; [exact Heq|split; [|split]]].
-  - apply (optimise_all_preserves_expression_typing_but paper_ontology paper_excluded _ _
+  - apply (optimise_all_preserves_expression_typing_but paper_ontology paper_excluded _ _ _ _
       paper_plain_intro_sound_excl paper_excluded_tag_free typed_neg_tt_typed);
       vm_compute; reflexivity.
-  - apply (proj2 (optimise_all_preserves_evaluation _ _)).
+  - apply (proj2 (optimise_all_preserves_evaluation typed_neg 'tt [] 'ff)).
     rewrite Heq; exact neg_tt.
   - rewrite Heq; exact neg_tt.
 Qed.
 
-(** [optimise] is its own type, it erases the tag
-    and ghost of [typed_neg], and it preserves the types of expressions
-    whose heads avoid the carriers that are not sound by typing
+(** [optimise] is its own type, it erases the tag of the query constant
+    [Kq[0]], and the head it computes keeps the type of every application
+    whose head avoids the carriers that are not sound by typing
     ([heads_avoid paper_excluded]). *)
 Theorem optimise_typed :
   infer paper_ontology @ optimise ==> Sm optimise /\
-  optimise @ (('Kq zero) @ 'tt) ==> ('K1 zero) @ 'tt /\
-  (forall e e' T, heads_avoid paper_excluded e = true ->
-     infer_expression paper_ontology @ e ==> Sm T ->
-     optimise @ e ==> e' -> infer_expression paper_ontology @ e' ==> Sm T).
+  optimise @ ('Kq zero) ==> ('K1 zero) /\
+  (forall f x xs T g, heads_avoid paper_excluded f = true ->
+     has_type paper_ontology f (x :: xs) T ->
+     optimise @ f ==> g -> has_type paper_ontology g (x :: xs) T).
 Proof.
   split; [apply infer_tag_free, concrete_tag_free, optimise_concrete|split].
-  - assert (HQ : optimise_fn (('Kq zero) @ 'tt) = ('K1 zero) @ 'tt) by (vm_compute; reflexivity).
+  - assert (HQ : undecorate (untag ('Kq zero)) = 'K1 zero) by (vm_compute; reflexivity).
     rewrite <- HQ; apply optimise_eval.
-  - intros e e' T Ha H He.
-    rewrite (eval_deterministic _ _ He _ (optimise_eval e)).
-    exact (optimise_preserves_expression_typing_but paper_ontology paper_excluded e T
+  - intros f x xs T g Ha H Hg.
+    rewrite (eval_deterministic _ _ _ Hg _ (optimise_eval f)).
+    exact (optimise_preserves_expression_typing_but paper_ontology paper_excluded f x xs T
       paper_plain_intro_sound_excl paper_excluded_tag_free H Ha).
 Qed.
+
 
 
 Unset Default Proof Using.
@@ -1056,10 +903,10 @@ Proof.
   intros X C H; unfold Z in H.
   destruct (infer_fork_inv AI _ _ _ H) as [T1 [T2 [H1 [H2 H12]]]].
   destruct (infer_stem_inv AI _ _ H1) as [A' [-> HA]].
-  pose proof (eval_deterministic _ _ H2 _ (infer_I AI)) as E2.
+  pose proof (eval_deterministic _ _ _ H2 _ (infer_I AI)) as E2.
   inversion E2; subst T2; clear E2 H2.
   destruct (infer_fork_inv AI _ _ _ HA) as [P [Q [HP [HQ HPQ]]]].
-  pose proof (eval_deterministic _ _ HP _
+  pose proof (eval_deterministic _ _ _ HP _
     (infer_tag_free AI (Sm ('K1 dup_z)) ltac:(tag_free_tac))) as EP.
   inversion EP; subst P; clear EP HP.
   destruct (infer_K1_result_inv AI _ _ HQ) as [G [-> HG]].
@@ -1067,7 +914,7 @@ Proof.
   apply stem_plain in H12; [subst C|intros; discriminate].
   destruct (infer_fork_inv AI _ _ _ HG) as [P2 [Q2 [HP2 [HQ2 HPQ2]]]].
   destruct (infer_stem_inv AI _ _ HP2) as [A2 [-> HA']].
-  pose proof (eval_deterministic _ _ HQ2 _ (infer_tag_free AI bz ltac:(tag_free_tac))) as EQ.
+  pose proof (eval_deterministic _ _ _ HQ2 _ (infer_tag_free AI bz ltac:(tag_free_tac))) as EQ.
   inversion EQ; subst Q2; clear EQ HQ2.
   destruct (infer_K1_result_inv AI _ _ HA') as [X' [-> HX]].
   apply stem_plain in HPQ2; [subst G|intros; discriminate].
@@ -1120,7 +967,7 @@ Proof.
   intros f u T H; unfold lam in H.
   destruct (infer_tagged_source_inv AI _ _ _ H)
     as [C [N [E [-> [HC [HN HI]]]]]].
-  pose proof (eval_deterministic _ _ HN _ (infer_fun_nm AI)) as EN.
+  pose proof (eval_deterministic _ _ _ HN _ (infer_fun_nm AI)) as EN.
   inversion EN; subst N; clear EN HN.
   apply (function_declared_inv AI) in HI.
   destruct (function_abstractor_success_inv _ _ _ HI)
@@ -1143,7 +990,7 @@ Proof.
   intros f T H; unfold fix_function in H.
   destruct (infer_tagged_source_inv AI _ _ _ H)
     as [C [N [E [-> [HC [HN HI]]]]]].
-  pose proof (eval_deterministic _ _ HN _ (infer_fun_nm AI)) as EN.
+  pose proof (eval_deterministic _ _ _ HN _ (infer_fun_nm AI)) as EN.
   inversion EN; subst N; clear EN HN.
   apply (function_declared_inv AI) in HI.
   destruct (infer_Z_inv _ _ HC) as [X' [-> HX]].
@@ -1214,7 +1061,7 @@ Proof.
   destruct (fix_function_typing_inv AI _ _ H) as [U [V [_ HB]]].
   unfold dither_body_neg, typed_compose_with_body in HB; cbn in HB.
   destruct (infer_fork_inv AI _ _ _ HB) as [X [Y [_ [HY HXY]]]].
-  pose proof (eval_deterministic _ _ HY _
+  pose proof (eval_deterministic _ _ _ HY _
     (infer_tag_free AI ('K1 ('label[fun_nm])) ltac:(unfold fun_nm; tag_free_tac))) as EY.
   inversion EY; subst Y; clear EY HY.
   apply stem_plain in HXY; [|intros; discriminate].
@@ -1349,15 +1196,15 @@ Proof.
 Qed.
 
 
-(** (b) [erased_dither @ tt] has expression type [Bool]. *)
-Lemma erased_dither_tt_infer_expression : forall (AI : Decl),
+(** (b) [erased_dither @ tt] has type [Bool]. *)
+Lemma erased_dither_tt_typed : forall (AI : Decl),
   supports_booleans AI ->
-  infer_expression AI @ (erased_dither @ 'tt) ==> Sm ('Bool).
+  has_type AI erased_dither ['tt] ('Bool).
 Proof.
   intros AI Hb.
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; apply erased_dither_infer; exact Hb.
-  - apply infer_expression_stem; apply tt_infer; exact Hb.
+  has_type_intro.
+  - apply erased_dither_infer; exact Hb.
+  - apply tt_infer; exact Hb.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 
@@ -1556,8 +1403,7 @@ Proof.
     + inversion H; constructor.
     + destruct (run fuel a u) eqn:HA; [|discriminate].
       destruct (run fuel b u) eqn:HB; [|discriminate].
-      apply eval_s; eapply eval_appl; [eapply IH; exact HA|].
-      eapply eval_appr; eapply IH; eassumption.
+      eapply eval_s; eapply IH; eassumption.
     + destruct u as [|x|x y].
       * inversion H; constructor.
       * apply eval_stem; eapply IH; exact H.
@@ -1644,7 +1490,7 @@ Proof.
       [|apply tt_infer; exact Hb|apply type_app_K_ev].
     apply infer_K1; apply infer_stem; apply infer_stem; apply infer_K1.
     apply typed_neg_infer; exact Hb.
-  - intro H1; pose proof (eval_deterministic _ _ H1 _ H2) as E.
+  - intro H1; pose proof (eval_deterministic _ _ _ H1 _ H2) as E.
     unfold funty, Neg in E; inversion E.
 Qed.
 
@@ -1672,13 +1518,13 @@ Proof.
     destruct (fix_function_typing_inv AI _ _ H) as [U [V [-> HF]]].
     destruct (lam_typing_inv AI _ _ _ HF) as [B [U' [V' [HT [HB [Hwt HBapp]]]]]].
     unfold funty in HT; inversion HT; subst U' V'; clear HT.
-    pose proof (eval_deterministic _ _ Hwt _ Hw) as EW.
+    pose proof (eval_deterministic _ _ _ Hwt _ Hw) as EW.
     unfold funty in EW; inversion EW; subst U V; clear EW.
     rewrite head_erase_fb_bad in HB.
     destruct (infer_K1_result_inv AI _ _ HB) as [L [-> HL]].
-    pose proof (eval_deterministic _ _ HL _ Hw') as EL.
+    pose proof (eval_deterministic _ _ _ HL _ Hw') as EL.
     inversion EL; subst L; clear EL.
-    pose proof (eval_deterministic _ _ HBapp _
+    pose proof (applied_deterministic _ _ _ HBapp _
       (type_app_K_ev AI _ ('Bool --> 'S1 ('K1 ('Bool --> 'Bool))))) as EV.
     unfold funty, Neg in EV; inversion EV.
 Qed.
@@ -1733,7 +1579,7 @@ Proof.
     exact (Hgl n eq_refl). }
   destruct (S_success_inv' _ _ _ _ (HG2 C)
     (get_name_test_S_right _ _ HG1) H) as [A [B [HA [HB HAB]]]].
-  pose proof (eval_deterministic _ _ HA _ (app_K AI C U)) as EA.
+  pose proof (applied_deterministic _ _ _ HA _ (app_K AI C U)) as EA.
   inversion EA; subst A; clear EA HA.
   destruct (erase_typing AI c C B V Hs Hc HAB) as [C' [HC' HC'app]].
   exists C'; split; [exact HC'|].
@@ -1848,7 +1694,7 @@ Proof.
     exact (Hgl n eq_refl). }
   destruct (S_success_inv' AI _ _ _ _ (HG2 C)
     (get_name_test_S_right _ _ HG1) HT) as [A [B [HA [HB HAB]]]].
-  pose proof (eval_deterministic _ _ HA _ (app_K AI C U)) as EA.
+  pose proof (applied_deterministic _ _ _ HA _ (app_K AI C U)) as EA.
   inversion EA; subst A; clear EA HA.
   destruct (IHg G U B Hs Hokg Hg HB) as [G' [HG' HG'app]].
   destruct (erase_typing AI c C B V Hs Hc HAB) as [C' [HC' HC'app]].
@@ -2031,7 +1877,7 @@ Proof. repeat split; apply (run_sound 200); vm_compute; reflexivity. Qed.
     over List[Emp] applying it; erased_raise_all erases the tags and ghosts
     inside the body.  Paper Theorems erased_raise_all_typed and
     raise_all_workers. *)
-From Stdlib Require Import String List.
+From Stdlib Require Import String.
 From TreeTyping Require Import tree typing soundness booleans.
 From TreeTyping Require Import functions data_types conditionals paper_ontology customisation.
 Open Scope string_scope.
@@ -2206,7 +2052,7 @@ Proof.
   apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 
-(** Typing of the erased fixfunction: twice [erase_typing] (optimisation.v),
+(** Typing of the erased fixfunction: twice [erase_typing_but],
     once for the nested [increment_salary] and once for [raise_emp]. *)
 Lemma erased_raise_all_typed :
   infer AI @ erased_raise_all ==> Sm ('List['Employee] --> 'List['Employee]).
@@ -2266,18 +2112,27 @@ Proof.
   apply (proj1 (erase_app_eval_iff _ _ _)); apply increment_salary_eval.
 Qed.
 
-(** Erasing an unsafe head can leave an untyped expression: the triage
+(** A type computed for an application is its type. *)
+Lemma app_type_bounded_typed : forall AI n f u T,
+  app_type_bounded AI n f u = Some (Sm T) -> has_type AI f [u] T.
+Proof.
+  intros AI n f u T H; unfold app_type_bounded in H.
+  destruct (eval_bounded n (inf AI) f) as [[|F|? ?]|] eqn:E1,
+    (eval_bounded n (inf AI) u) as [[|U|? ?]|] eqn:E2; cbn in H; try discriminate.
+  eapply has_type_ap; [eapply eval_bounded_sound; exact E1
+    |eapply eval_bounded_sound; exact E2|eapply applied_bounded_sound; exact H].
+Qed.
+
+(** Erasing an unsafe head can leave an untyped application: the triage
     query [tq[tt, Kq tt, Kq (Kq tt)]] applied to [tt] is typed, its head is
-    not safe, and the optimised expression has no type (computed). *)
+    not safe, and the optimised application has no type (computed). *)
 Lemma optimise_unsafe_head_untyped :
-  heads_avoid paper_excluded ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)] @ 'tt) = false /\
-  (exists T, infer_expression paper_ontology @ ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)] @ 'tt) ==> Sm T) /\
-  ~ (exists T, infer_expression paper_ontology @ optimise_fn ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)] @ 'tt) ==> Sm T).
+  heads_avoid paper_excluded ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)]) = false /\
+  (exists T, has_type paper_ontology ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)]) ['tt] T) /\
+  ~ (exists T, has_type paper_ontology (optimise_fn ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)])) ['tt] T).
 Proof.
   split; [vm_compute; reflexivity|split].
-  - eexists; apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
-  - intros [T H].
-    assert (HL : infer_expression paper_ontology @ optimise_fn ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)] @ 'tt) ==> Lf)
-      by (apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity).
-    pose proof (eval_deterministic _ _ H _ HL); discriminate.
+  - eexists; apply (app_type_bounded_typed _ (Nat.pow 10 6)); vm_compute; reflexivity.
+  - intros [T H]; revert H.
+    apply (app_type_bounded_untyped _ (Nat.pow 10 6)); vm_compute; reflexivity.
 Qed.

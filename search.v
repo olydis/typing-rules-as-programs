@@ -87,9 +87,9 @@ Proof.
   inv_out H; invert_eval.
   all: repeat match goal with
   | H1 : bool_mk @ ?y ==> ?x |- _ =>
-      pose proof (eval_deterministic _ _ H1 _ (bool_mk_eval y)); subst x; clear H1
+      pose proof (eval_deterministic _ _ _ H1 _ (bool_mk_eval y)); subst x; clear H1
   | H1 : nat_type_mk @ ?y ==> ?x |- _ =>
-      pose proof (eval_deterministic _ _ H1 _ (nat_type_mk_eval y)); subst x; clear H1
+      pose proof (eval_deterministic _ _ _ H1 _ (nat_type_mk_eval y)); subst x; clear H1
   end.
   all: match goal with
   | H1 : equal @ ?V ==> ?e, H2 : ?e @ ?W ==> ?b |- _ =>
@@ -118,13 +118,21 @@ Proof.
   - exfalso; apply ceqb_true in E1; apply ceqb_true in E2; rewrite E1 in E2; discriminate.
   - subst r; unfold search_row, swap, search_eliminator, payload_eliminator in *;
       cbn -[equal seek_check seek_run acc_cell nat_type_mk]; d_eval.
-  - destruct (eval_app_r_inv _ _ _ Hr) as [w2 [H5 H6]].
-    destruct (eval_app_r_inv _ _ _ H5) as [w1 [H7 H8]].
+  - destruct (eval_appl_inv _ _ _ _ Hr) as [w2 [H5 H6]].
+    destruct (eval_appl_inv _ _ _ _ H5) as [w1 [H7 H8]].
     unfold search_row, swap, search_eliminator, payload_eliminator in *;
       cbn -[equal seek_check seek_run acc_cell nat_type_mk]; d_eval.
   - subst r; unfold search_row, swap, search_eliminator, payload_eliminator in *;
       cbn -[equal seek_check seek_run acc_cell nat_type_mk]; d_eval.
 Qed.
+
+(** Identify the values of evaluations of the same application. *)
+Local Ltac identify :=
+  repeat match goal with
+  | H1 : ?ef @ ?eu ==> ?v1, H2 : ?ef @ ?eu ==> ?v2 |- _ =>
+      let E := fresh "E" in
+      pose proof (eval_deterministic _ _ _ H1 _ H2) as E; clear H2; subst
+  end.
 
 Lemma search_row_seek_inv : forall a C r,
   let x := path_fn path_cell C in
@@ -140,21 +148,14 @@ Proof.
   clearbody x; subst C.
   pose proof (equal1_eq ('wait[seek_run, x '* 'Nat])) as H4.
   unfold search_row in H; cbn -[equal equal1 seek_check seek_run acc_cell nat_type_mk] in H.
-  inv_out H; invert_eval.
-  pose proof (eval_deterministic _ _ H6 _ HB); subst v2.
-  pose proof (eval_deterministic _ _ H8 _ HT); subst v4.
-  pose proof (eval_deterministic _ _ H10 _ He); subst v9.
-  pose proof (eval_deterministic _ _ H14 _ H3); subst v1.
-  pose proof (eval_deterministic _ _ H18 _ H4); subst v8.
-  assert (Hk : 'K @ ('wait2[seek_check, a, x]) ==> 'K1 ('wait2[seek_check, a, x])) by evaluate.
-  pose proof (eval_deterministic _ _ H17 _ Hk); subst v6.
-  assert (Hk1 : ('K1 ('wait2[seek_check, a, x])) @ ('K1 Lf) ==> 'wait2[seek_check, a, x]) by evaluate.
-  pose proof (eval_deterministic _ _ H16 _ Hk1); subst v5.
-  assert (Hki : 'KI @ Sm ('wait[payload_elim, 'Nat]) ==> 'I) by evaluate.
-  pose proof (eval_deterministic _ _ H13 _ Hki); subst v3.
-  assert (Hi : 'I @ v7 ==> v7) by evaluate.
-  pose proof (eval_deterministic _ _ H12 _ Hi); subst r.
-  apply wait2_eval_inv in H15; exact H15.
+  inv_out H; invert_eval; identify.
+  match goal with H : 'K @ _ ==> _ |- _ => inv_out H end.
+  match goal with H : ('K1 _) @ ('K1 Lf) ==> _ |- _ => inv_out H end.
+  match goal with H : 'KI @ _ ==> _ |- _ => inv_out H end.
+  match goal with H : 'I @ ?b ==> r |- _ =>
+    pose proof (eval_deterministic _ _ _ H _ (I_eval b)) as -> end.
+  match goal with H : 'wait2[seek_check, a, _] @ Lf ==> _ |- _ =>
+    apply wait2_eval_inv in H; exact H end.
 Qed.
 
 (** ** Soundness by typing *)
@@ -178,7 +179,7 @@ Proof using HS.
   destruct row_value as [D HD].
   assert (H : search_row @ type_app AI @r swap ('Nat) ==> Sm search_eliminator).
   { apply search_row_eval; cbv zeta; rewrite ceqb_refl; reflexivity. }
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
   eapply eval_appl; [eapply eval_appl; [exact HS|exact Hw]|exact Hv].
 Qed.
 
@@ -192,7 +193,7 @@ Proof using HS.
     rewrite Hx, ceqb_refl.
     destruct (ceqb _ _) eqn:Hc; [exfalso; apply ceqb_true in Hc; discriminate|].
     apply seek_check_eval; exact HP. }
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
   eapply eval_appl; [eapply eval_appl; [exact HS|exact Hw]|exact Hv].
 Qed.
 
@@ -226,7 +227,7 @@ Proof using HS HN.
   - apply ceqb_true in H1; subst C.
     assert (H2 : search_row @ type_app AI @r swap ('Nat) ==> Sm search_eliminator)
       by (apply search_row_eval; cbv zeta; rewrite ceqb_refl; reflexivity).
-    pose proof (eval_deterministic _ _ HR _ H2) as Hs; inversion Hs; subst E.
+    pose proof (applied_deterministic _ _ _ HR _ H2) as Hs; inversion Hs; subst E.
     apply payload_eliminator_inv in HE.
     apply type_app_swap2; exact HE.
   - set (x := path_fn path_cell C) in *.
@@ -240,7 +241,7 @@ Proof using HS HN.
     + exfalso.
       assert (H3 : search_row @ type_app AI @r C ==> Lf)
         by (apply search_row_eval; cbv zeta; fold x; rewrite H1, H2; reflexivity).
-      pose proof (eval_deterministic _ _ HR _ H3) as Hs; discriminate.
+      pose proof (applied_deterministic _ _ _ HR _ H3) as Hs; discriminate.
 Qed.
 
 Lemma infer_done : forall n,
@@ -291,9 +292,8 @@ Proof.
   pose proof (done_step_eval n) as HD.
   pose proof (succ_step_eval n) as HS.
   unfold seek; apply tagged_eval; apply wait_eval.
-  destruct (eval_app_r_inv _ _ _ Hr) as [c [Hc Hcf]].
+  destruct (eval_appl_inv _ _ _ _ Hr) as [c [Hc Hcf]].
   eapply eval_appl; [apply Z_unfold|exact Hcf].
-  destruct (eval_app_r_inv _ _ _ Hc) as [w [Hw Hwc]].
   unfold seek_body; cbn -[succ_step done_step]; d_eval.
 Qed.
 
@@ -308,13 +308,15 @@ Proof.
   pose proof (done_step_eval n) as HD.
   pose proof (succ_step_eval n) as HS.
   unfold seek in H; apply tagged_eval_inv, wait_eval_inv in H.
-  destruct (eval_app_r_inv _ _ _ H) as [g [Hg Hf]].
+  destruct (eval_appl_inv _ _ _ _ H) as [g [Hg Hf]].
   apply Z_unfold_inv in Hg.
   unfold seek_body in Hg; cbn -[succ_step done_step] in Hg.
   invert_eval.
-  pose proof (eval_deterministic _ _ H10 _ HD); subst v4.
-  pose proof (eval_deterministic _ _ H14 _ HS); subst v9.
-  exists v1; split; [exact H9|eapply eval_appl; [exact H8|exact Hf]].
+  match goal with H : done_step @ _ ==> _ |- _ =>
+    pose proof (eval_deterministic _ _ _ H _ HD) as -> end.
+  match goal with H : succ_step @ _ ==> _ |- _ =>
+    pose proof (eval_deterministic _ _ _ H _ HS) as -> end.
+  eexists; split; [eassumption|eapply eval_appl; [eassumption|exact Hf]].
 Qed.
 
 Lemma tt_choose : forall a b f r, a @ f ==> r -> 'tt @ (a '* b) @r f ==> r.
@@ -342,10 +344,10 @@ Lemma seek_found_inv : forall p n f v,
   p @ n ==> 'tt -> seek p n @ f ==> v -> f @ n ==> v.
 Proof.
   intros p n f v Hp H; destruct (seek_unfold_inv _ _ _ _ H) as [b [Hb Hr]].
-  pose proof (eval_deterministic _ _ Hb _ Hp); subst b.
-  destruct (eval_app_r_inv _ _ _ Hr) as [c [Hc Hf]].
+  pose proof (eval_deterministic _ _ _ Hb _ Hp); subst b.
+  destruct (eval_appl_inv _ _ _ _ Hr) as [c [Hc Hf]].
   apply tagged_eval_inv in Hc.
-  pose proof (eval_deterministic _ _ Hc _ (fst_pair _ _)); subst c.
+  pose proof (eval_deterministic _ _ _ Hc _ (fst_pair _ _)); subst c.
   apply done_eval_inv; exact Hf.
 Qed.
 
@@ -353,10 +355,10 @@ Lemma seek_next_inv : forall p n f v,
   p @ n ==> 'ff -> seek p n @ f ==> v -> seek p (succ n) @ f ==> v.
 Proof.
   intros p n f v Hp H; destruct (seek_unfold_inv _ _ _ _ H) as [b [Hb Hr]].
-  pose proof (eval_deterministic _ _ Hb _ Hp); subst b.
-  destruct (eval_app_r_inv _ _ _ Hr) as [c [Hc Hf]].
+  pose proof (eval_deterministic _ _ _ Hb _ Hp); subst b.
+  destruct (eval_appl_inv _ _ _ _ Hr) as [c [Hc Hf]].
   apply tagged_eval_inv in Hc.
-  pose proof (eval_deterministic _ _ Hc _ (snd_pair _ _)); subst c.
+  pose proof (eval_deterministic _ _ _ Hc _ (snd_pair _ _)); subst c.
   exact Hf.
 Qed.
 
@@ -401,12 +403,12 @@ Qed.
 
 Lemma infer_seek_is_odd : forall AI,
   supports_search AI -> supports_booleans AI -> supports_number AI ->
-  infer_expression AI @ (seek is_odd zero @ 'I) ==> Sm ('Nat).
+  has_type AI (seek is_odd zero) ['I] ('Nat).
 Proof.
-  intros AI HS HB HN; eapply infer_expression_fork.
-  - apply infer_expression_stem; eapply infer_seek;
+  intros AI HS HB HN; has_type_intro.
+  - eapply infer_seek;
       [exact HS|apply infer_is_odd; exact HB|apply infer_zero; exact HN|apply type_app_Odd].
-  - apply infer_expression_stem; apply infer_I.
+  - apply infer_I.
   - apply type_app_Search; apply type_app_I.
 Qed.
 
@@ -429,18 +431,18 @@ Qed.
 
 Theorem infer_minimise_is_odd_fn : forall (AI : Decl),
   supports_booleans AI -> supports_number AI ->
-  infer_expression AI @ (minimisation_fn @ typed_is_odd @r zero) ==> Sm ('Nat).
+  has_type AI minimisation_fn [typed_is_odd; zero] ('Nat).
 Proof.
   intros AI HB HN.
   assert (Hp : infer AI @ typed_is_odd ==> Sm ('Nat --> 'Bool)).
   { unfold typed_is_odd; eapply infer_lam;
       [apply infer_is_odd; exact HB|apply infer_zero; exact HN|apply type_app_Odd]. }
-  eapply infer_expression_fork.
-  - eapply infer_expression_fork;
-      [apply infer_expression_stem; apply infer_minimisation_fn; assumption
-      |apply infer_expression_stem; exact Hp
+  has_type_intro.
+  - has_type_intro;
+      [apply infer_minimisation_fn; assumption
+      |exact Hp
       |apply type_app_abstract; apply funty_eliminator_eval].
-  - apply infer_expression_stem; apply infer_zero; exact HN.
+  - apply infer_zero; exact HN.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 
@@ -466,10 +468,10 @@ Definition plain_search := Z plain_search_body.
 
 Lemma plain_search_refused :
   type_app nat_ontology @ plain_search @r (('K1 ('Bool)) '* 'Nat) ==> Lf.
-Proof. apply (eval_bounded_sound 8000); vm_compute; reflexivity. Qed.
+Proof. compute_eval 8000. Qed.
 
 (** It runs, with a predicate that holds at once. *)
 Lemma plain_search_runs :
   plain_search @ (('K1 ('tt)) '* numeral 3) @r Lf ==> numeral 3.
-Proof. apply (eval_bounded_sound 4000); vm_compute; reflexivity. Qed.
+Proof. compute_eval 4000. Qed.
 

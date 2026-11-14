@@ -13,8 +13,8 @@
     - concrete programs stay concrete, so each is still its own type
       ([specialise_concrete], [specialise_self_typed]); a tester holds no
       label for any [c] ([equal1_concrete]);
-    - type and value of an expression are preserved when every replaced tester
-      is the function part of an application ([heads_only],
+    - type and value of an application are preserved when the walk changes
+      at most its head, a tester at a tag-free value ([heads_only],
       [specialise_typed], [specialise_preserves_evaluation]); without that
       the type changes ([specialise_changes_type]), and the excluded name
       tests would lose theirs ([specialised_name_test_untyped]);
@@ -26,7 +26,7 @@
 
 From Stdlib Require Import String Lia PeanoNat List NArith.
 From TreeTyping Require Import tree typing soundness booleans.
-From TreeTyping Require Import functions queries updates paper_ontology conditionals data_types arrays customisation self_typing optimisation steps.
+From TreeTyping Require Import functions queries updates paper_ontology conditionals data_types arrays customisation self_typing optimisation steps patching.
 Import ListNotations.
 
 Open Scope string_scope.
@@ -167,9 +167,8 @@ Theorem tester_agrees : forall c x v,
 Proof.
   intros c x v; split; intro H.
   - apply wait_eval_inv in H.
-    destruct (eval_pair_inv _ _ _ H) as [a [b [Ha [Hb Hv]]]].
-    inv_out Hb.
-    rewrite (eval_deterministic _ _ Ha _ (equal_eval c)) in Hv; exact Hv.
+    destruct (eval_appl_inv _ _ _ _ H) as [a [Ha Hv]].
+    rewrite (eval_deterministic _ _ _ Ha _ (equal_eval c)) in Hv; exact Hv.
   - apply wait_eval; eapply eval_appl; [apply equal_eval|exact H].
 Qed.
 
@@ -264,26 +263,21 @@ Lemma specialise_equal_concrete : concrete specialise_equal.
 Proof. Local Transparent equal get_wait. apply concreteb_sound; vm_compute; reflexivity. Qed.
 Local Opaque equal get_wait.
 
-(** [heads_only e]: every tester that [specialise_fn] replaces in the
-    expression [e] is the function part of an application, at a tag-free
-    [c]. *)
+(** [heads_only f xs]: the walk leaves every argument [xs] unchanged, and
+    either leaves the head [f] unchanged or replaces a tester
+    [wait[equal,c]] at a tag-free [c]. *)
 Definition fixedb (v : Combination) : bool := ceqb (specialise_fn v) v.
 Definition redex_head (v : Combination) : bool :=
   match site v with Some c => tag_free c | None => false end.
-Fixpoint heads_only (e : Combination) : bool :=
-  match e with
-  | Lf => true
-  | Sm v => fixedb v
-  | Fk e1 e2 =>
-      match site (Fk e1 e2) with
-      | Some _ => false
-      | None =>
-          (match e1 with
-           | Sm v => fixedb v || redex_head v
-           | _ => heads_only e1
-           end) && heads_only e2
-      end
-  end%bool.
+Definition heads_only (f : Combination) (xs : list Combination) : bool :=
+  (fixedb f || redex_head f) && List.forallb fixedb xs.
+
+Lemma fixed_args : forall xs, List.forallb fixedb xs = true -> List.map specialise_fn xs = xs.
+Proof.
+  induction xs as [|x xs IH]; intro H; [reflexivity|].
+  cbn in H |- *; apply andb_prop in H as [Hx H]; apply ceqb_true in Hx.
+  rewrite Hx, (IH H); reflexivity.
+Qed.
 
 Section Mirror.
 Variable AI : Decl.
@@ -320,8 +314,8 @@ Proof.
   apply (proj2 (structural_triage_plain _ _ _ _ _ _ HP)).
   unfold plain_triage, structural_fork.
   pose proof (get_tagged_none _ HX).
-  destruct (eval_app_r_inv _ _ _ H1) as [w [Hw HR]].
-  destruct (eval_app_r_inv _ _ _ H2) as [w2 [Hw2 HR2]].
+  destruct (eval_appl_inv _ _ _ _ H1) as [w [Hw HR]].
+  destruct (eval_appl_inv _ _ _ _ H2) as [w2 [Hw2 HR2]].
   cbn; repeat first [eassumption | progress evaluate].
 Qed.
 
@@ -371,57 +365,51 @@ Proof.
   intros c U V Hc; split; intro H.
   - destruct (S_success_inv' AI ('S2['K1 equal,'K1 c]) 'I U V
       ltac:(intros; discriminate) ltac:(reject_name) H) as [A [B [HA [HB HAB]]]].
-    pose proof (eval_deterministic _ _ HB _ (app_I AI U)) as E; inversion E; subst B; clear E HB.
+    pose proof (applied_deterministic _ _ _ HB _ (app_I AI U)) as E; inversion E; subst B; clear E HB.
     destruct (S_success_inv' AI ('K1 equal) ('K1 c) U A
       ltac:(intros; discriminate) ltac:(reject_name) HA) as [A1 [B1 [HA1 [HB1 HAB1]]]].
-    pose proof (eval_deterministic _ _ HA1 _ (app_K AI equal U)) as E1.
-    pose proof (eval_deterministic _ _ HB1 _ (app_K AI c U)) as E2.
+    pose proof (applied_deterministic _ _ _ HA1 _ (app_K AI equal U)) as E1.
+    pose proof (applied_deterministic _ _ _ HB1 _ (app_K AI c U)) as E2.
     inversion E1; inversion E2; subst A1 B1.
-    pose proof (eval_deterministic _ _ HAB1 _ (app_equal c Hc)) as E3.
+    pose proof (applied_deterministic _ _ _ HAB1 _ (app_equal c Hc)) as E3.
     inversion E3; subst A; exact HAB.
   - eapply type_app_wait; [apply app_equal; exact Hc|exact H].
 Qed.
 
-(** ** Expressions whose testers are only applied *)
+(** ** Applications whose testers are only applied *)
 
-Lemma specialise_preserves_expression_typing : forall e T,
-  heads_only e = true ->
-  infer_expression AI @ e ==> Sm T ->
-  infer_expression AI @ specialise_fn e ==> Sm T.
+(** The head of a typed application, after the walk, applies alike at the
+    argument type. *)
+Lemma specialise_head_typing : forall f F U T,
+  (fixedb f || redex_head f)%bool = true ->
+  infer AI @ f ==> Sm F -> tapp @ F @r U ==> Sm T ->
+  exists F', infer AI @ specialise_fn f ==> Sm F' /\ tapp @ F' @r U ==> Sm T.
 Proof.
-  induction e as [|u _|e1 IH1 e2 IH2]; intros T Ho H.
-  - exact H.
-  - rewrite specialise_fn_site_none by reflexivity.
-    cbn [heads_only] in Ho; apply ceqb_true in Ho; rewrite Ho; exact H.
-  - cbn [heads_only] in Ho; destruct (site (Fk e1 e2)) as [c|] eqn:Es; [discriminate|].
-    rewrite specialise_fn_site_none by exact Es.
-    apply andb_prop in Ho as [Ho1 Ho2].
-    destruct (infer_expression_fork_inv AI e1 e2 T H) as [T1 [T2 [H1 [H2 Happ]]]].
-    destruct e1 as [|v|a b].
-    + pose proof (eval_deterministic _ _ H1 _ (infer_expression_leaf AI)); discriminate.
-    + apply infer_expression_stem_inv in H1.
-      apply Bool.orb_true_iff in Ho1 as [Hf|Hr].
-      * rewrite specialise_fn_site_none by reflexivity.
-        apply ceqb_true in Hf; rewrite Hf.
-        eapply infer_expression_fork;
-          [apply infer_expression_stem; exact H1|exact (IH2 T2 Ho2 H2)|exact Happ].
-      * unfold redex_head in Hr; destruct (site v) as [c|] eqn:Ev; [|discriminate].
-        apply site_some in Ev; subst v.
-        pose proof (eval_deterministic _ _ H1 _
-          (infer_tag_free AI _ (wait_equal_tag_free c Hr))) as E; inversion E; subst T1; clear E.
-        rewrite specialise_fn_site_none by reflexivity.
-        rewrite specialise_fn_wait.
-        assert (Hv : infer AI @ (match c with Sm _ => 'wait[equal,c] | _ => equal1 c end)
-                       ==> Sm (match c with Sm _ => 'wait[equal,c] | _ => equal1 c end) /\
-                     tapp @ (match c with Sm _ => 'wait[equal,c] | _ => equal1 c end) @r T2 ==> Sm T).
-        { destruct c as [|n|p q]; split;
-            first [ exact Happ
-                  | exact H1
-                  | apply infer_tag_free, concrete_tag_free, concreteb_sound, equal1_concrete
-                  | apply app_tester; [exact Hr|exact Happ] ]. }
-        eapply infer_expression_fork;
-          [apply infer_expression_stem; exact (proj1 Hv)|exact (IH2 T2 Ho2 H2)|exact (proj2 Hv)].
-    + eapply infer_expression_fork; [exact (IH1 T1 Ho1 H1)|exact (IH2 T2 Ho2 H2)|exact Happ].
+  intros f F U T Ho Hf HA.
+  apply Bool.orb_true_iff in Ho as [Hx|Hr].
+  - apply ceqb_true in Hx; rewrite Hx; eauto.
+  - unfold redex_head in Hr; destruct (site f) as [c|] eqn:Ef; [|discriminate].
+    apply site_some in Ef; subst f.
+    pose proof (eval_deterministic _ _ _ Hf _
+      (infer_tag_free AI _ (wait_equal_tag_free c Hr))) as E; inversion E; subst F; clear E.
+    rewrite specialise_fn_wait.
+    destruct c as [|n|p q]; eexists; split;
+      first [ exact HA
+            | exact Hf
+            | apply infer_tag_free, concrete_tag_free, concreteb_sound, equal1_concrete
+            | apply app_tester; [exact Hr|exact HA] ].
+Qed.
+
+Lemma specialise_preserves_expression_typing : forall f x xs T,
+  heads_only f (x :: xs) = true ->
+  has_type AI f (x :: xs) T ->
+  has_type AI (specialise_fn f) (List.map specialise_fn (x :: xs)) T.
+Proof.
+  intros f x xs T Ho; apply andb_prop in Ho as [Ho Hxs]; rewrite (fixed_args _ Hxs).
+  refine (has_type_prefix AI f (specialise_fn f) [x] [x] _ xs T); intros V H.
+  destruct (has_type_ap_inv _ _ _ _ H) as [F [U [Hf [Hx HA]]]].
+  destruct (specialise_head_typing f F U V Ho Hf HA) as [F' [HF' HA']].
+  exact (has_type_ap _ _ _ _ _ _ HF' Hx HA').
 Qed.
 End Mirror.
 
@@ -433,47 +421,33 @@ Proof.
   apply site_some in Ev; subst v; apply specialise_fn_agrees.
 Qed.
 
-Lemma specialise_preserves_evaluation : forall e v,
-  heads_only e = true -> (e ==> v <-> specialise_fn e ==> v).
+Lemma specialise_preserves_evaluation : forall f x xs v,
+  heads_only f (x :: xs) = true ->
+  (apps f (x :: xs) ==> v <-> apps (specialise_fn f) (List.map specialise_fn (x :: xs)) ==> v).
 Proof.
-  induction e as [|u _|e1 IH1 e2 IH2]; intros v Ho.
-  - reflexivity.
-  - cbn [heads_only] in Ho; apply ceqb_true in Ho.
-    rewrite specialise_fn_site_none by reflexivity; rewrite Ho; reflexivity.
-  - cbn [heads_only] in Ho; destruct (site (Fk e1 e2)) as [c|] eqn:Es; [discriminate|].
-    rewrite specialise_fn_site_none by exact Es.
-    apply andb_prop in Ho as [Ho1 Ho2].
-    destruct e1 as [|w|a b].
-    + split; intro H; inversion H.
-    + rewrite specialise_fn_site_none by reflexivity.
-      rewrite !value_app_eval_iff.
-      apply Bool.orb_true_iff in Ho1 as [Hf|Hr].
-      * apply ceqb_true in Hf; rewrite Hf; split; intros [v2 [H2 H]];
-          exists v2; split; [apply IH2; assumption|exact H|apply IH2; assumption|exact H].
-      * split; intros [v2 [H2 H]]; exists v2; split.
-        -- apply IH2; assumption.
-        -- apply (proj1 (specialise_value_head _ _ _ Hr)); exact H.
-        -- apply IH2; assumption.
-        -- apply (proj2 (specialise_value_head _ _ _ Hr)); exact H.
-    + rewrite !app_eval_iff; split; intros [v1 [v2 [H1 [H2 H]]]];
-        exists v1, v2; repeat split;
-        [apply IH1; assumption|apply IH2; assumption|exact H|
-         apply IH1; assumption|apply IH2; assumption|exact H].
+  intros f x xs v Ho; apply andb_prop in Ho as [Ho Hxs]; rewrite (fixed_args _ Hxs).
+  apply apps_head_iff; intros u w.
+  apply Bool.orb_true_iff in Ho as [Hx|Hr].
+  - apply ceqb_true in Hx; rewrite Hx; reflexivity.
+  - apply specialise_value_head; exact Hr.
 Qed.
 
 Theorem specialise_typed : forall (AI : Decl),
   infer AI @ specialise_equal ==> Sm specialise_equal /\
   (forall c, specialise_equal @ 'wait[equal,'K1 c] ==> equal1 ('K1 c)) /\
-  (forall e e' T, heads_only e = true ->
-     infer_expression AI @ e ==> Sm T ->
-     specialise_equal @ e ==> e' -> infer_expression AI @ e' ==> Sm T).
+  (forall f x xs f' xs' T, heads_only f (x :: xs) = true ->
+     has_type AI f (x :: xs) T ->
+     patched specialise_equal f (x :: xs) f' xs' -> has_type AI f' xs' T).
 Proof.
   intro AI; split; [apply infer_tag_free, concrete_tag_free, specialise_equal_concrete|split].
   - intro c; pose proof (specialise_equal_eval ('wait[equal,'K1 c])) as H.
     rewrite specialise_fn_wait in H; exact H.
-  - intros e e' T Ho H He.
-    rewrite (eval_deterministic _ _ He _ (specialise_equal_eval e)).
-    exact (specialise_preserves_expression_typing AI e T Ho H).
+  - intros f x xs f' xs' T Ho H [Hf Hxs].
+    rewrite (eval_deterministic _ _ _ Hf _ (specialise_equal_eval f)).
+    replace xs' with (List.map specialise_fn (x :: xs)).
+    + exact (specialise_preserves_expression_typing AI f x xs T Ho H).
+    + clear Ho H; induction Hxs as [|y y' ys ys' Hy _ IH]; [reflexivity|].
+      cbn [List.map]; rewrite <- IH, (eval_deterministic _ _ _ Hy _ (specialise_equal_eval y)); reflexivity.
 Qed.
 
 (** ** What needs the exclusions *)
@@ -483,17 +457,14 @@ Definition K1_tester := 'wait[equal,'K1 Lf].
 (** A tester that is not only applied changes type: a concrete value is
     its own type. *)
 Lemma specialise_changes_type : forall (AI : Decl),
-  infer_expression AI @ Sm K1_tester ==> Sm K1_tester /\
-  infer_expression AI @ specialise_fn (Sm K1_tester) ==> Sm (equal1 ('K1 Lf)) /\
+  inf AI @ K1_tester ==> Sm K1_tester /\
+  inf AI @ specialise_fn K1_tester ==> Sm (equal1 ('K1 Lf)) /\
   K1_tester <> equal1 ('K1 Lf).
 Proof.
   intro AI; split; [|split].
-  - apply infer_expression_stem, infer_tag_free, wait_equal_tag_free; reflexivity.
-  - assert (E : specialise_fn (Sm K1_tester) = Sm (equal1 ('K1 Lf))).
-    { rewrite specialise_fn_site_none by reflexivity; unfold K1_tester.
-      rewrite specialise_fn_wait; reflexivity. }
-    rewrite E; apply infer_expression_stem, infer_tag_free, concrete_tag_free,
-      concreteb_sound, equal1_concrete.
+  - apply infer_tag_free, wait_equal_tag_free; reflexivity.
+  - unfold K1_tester; rewrite specialise_fn_wait.
+    apply infer_tag_free, concrete_tag_free, concreteb_sound, equal1_concrete.
   - unfold K1_tester; cbn; discriminate.
 Qed.
 
@@ -532,14 +503,14 @@ Proof.
   intros AI N HT [T H].
   destruct (infer_tagged_source_inv AI _ _ _ H) as [C [M [E [_ [HC [Hn HI]]]]]].
   assert (Htn : infer AI @ is_named_nm ==> Sm is_named_nm) by (apply infer_tag_free; reflexivity).
-  pose proof (eval_deterministic _ _ Hn _ Htn) as EM; inversion EM; subst M; clear EM Hn.
+  pose proof (eval_deterministic _ _ _ Hn _ Htn) as EM; inversion EM; subst M; clear EM Hn.
   assert (Hc : tag_free (equal1 (Sm N) 'C get_tagname) = true).
   { apply concrete_tag_free, concreteb_sound.
     assert (Hg : concreteb get_tagname = true) by (vm_compute; reflexivity).
     assert (Gen : forall e, concreteb e = true -> concreteb (e 'C get_tagname) = true).
     { intros e He; cbn [concreteb label_pair negb andb]; rewrite He; exact Hg. }
     apply Gen, equal1_concrete. }
-  pose proof (eval_deterministic _ _ HC _ (infer_tag_free AI _ Hc)) as EC.
+  pose proof (eval_deterministic _ _ _ HC _ (infer_tag_free AI _ Hc)) as EC.
   inversion EC; subst C; clear EC HC.
   pose proof (declaration_K1_inv _ _ _ _ _ _ HT HI) as Hrun.
   destruct (is_named_abstractor_inv _ _ Hrun) as [X [Ee _]].
@@ -641,7 +612,7 @@ Qed.
 Definition run_fuel := 1000 * 1000.
 
 Definition same_result (fuel : nat) (A B x : Combination) : bool :=
-  match run fuel (infer A) x, run fuel (infer B) x with
+  match optimisation.run fuel (infer A) x, optimisation.run fuel (infer B) x with
   | Some (Sm T), Some (Sm T') => ceqb T T'
   | _, _ => false
   end.
@@ -650,8 +621,8 @@ Lemma same_result_sound : forall fuel A B x, same_result fuel A B x = true ->
   exists T, infer A @ x ==> Sm T /\ infer B @ x ==> Sm T.
 Proof.
   intros fuel A B x H; unfold same_result in H.
-  destruct (run fuel (infer A) x) as [[|T|]|] eqn:E1; try discriminate.
-  destruct (run fuel (infer B) x) as [[|T'|]|] eqn:E2; try discriminate.
+  destruct (optimisation.run fuel (infer A) x) as [[|T|]|] eqn:E1; try discriminate.
+  destruct (optimisation.run fuel (infer B) x) as [[|T'|]|] eqn:E2; try discriminate.
   apply ceqb_true in H; subst T'.
   exists T; split; eapply run_sound; eassumption.
 Qed.
@@ -754,7 +725,7 @@ Fixpoint crun (fuel : nat) (f u : Combination) : option (Combination * N) :=
 Local Abbreviation adv := (advances_n atomic_rewrite).
 
 Lemma crun_sound : forall fuel f u v n,
-  crun fuel f u = Some (v, n) -> adv (N.to_nat n) (f @ u) (Sm v).
+  crun fuel f u = Some (v, n) -> adv (N.to_nat n) (f @@t u) (Sm v).
 Proof.
   induction fuel as [|fuel IH]; intros f u v n H; [discriminate|].
   cbn [crun] in H.
@@ -767,7 +738,7 @@ Proof.
   - rewrite quick_test_eq in Eq.
     assert (Er : atomic_rewrite f u = rule_rewrite f u)
       by (unfold atomic_rewrite; rewrite Eq; reflexivity).
-    assert (Hstep : forall k, adv k (rule_rewrite f u) (Sm v) -> adv (S k) (f @ u) (Sm v)).
+    assert (Hstep : forall k, adv k (rule_rewrite f u) (Sm v) -> adv (S k) (f @@t u) (Sm v)).
     { intros k Hk; econstructor; [apply adv_ready|rewrite Er; exact Hk]. }
     destruct f as [|x|[|g|a b] h].
     + inversion H; subst; apply Hstep; constructor.
@@ -797,10 +768,11 @@ Proof.
         apply IH; exact E2.
 Qed.
 
-(** [takes n e v]: [e] reaches the value [v] in exactly [n] steps. *)
-Definition takes (n : N) (e v : Combination) : Prop :=
-  steps (N.to_nat n) e = Sm v /\
-  forall j w, j < N.to_nat n -> steps j e <> Sm w.
+(** [takes n f u v]: the encoding of [f @ u] reaches the value [v] in
+    exactly [n] steps. *)
+Definition takes (n : N) (f u v : Combination) : Prop :=
+  steps (N.to_nat n) (f @@t u) = Sm v /\
+  forall j w, j < N.to_nat n -> steps j (f @@t u) <> Sm w.
 
 Lemma adv_first : forall k e v, adv k e (Sm v) ->
   forall j w, j < k -> steps j e <> Sm w.
@@ -813,7 +785,7 @@ Proof.
 Qed.
 
 Lemma crun_takes : forall fuel f u v n,
-  crun fuel f u = Some (v, n) -> takes n (f @ u) v.
+  crun fuel f u = Some (v, n) -> takes n f u v.
 Proof.
   intros fuel f u v n H; pose proof (crun_sound _ _ _ _ _ H) as A; split.
   - exact (advances_n_steps _ _ _ _ A).
@@ -827,7 +799,7 @@ Definition counts (fuel : nat) (n : N) (f u : Combination) : bool :=
   end.
 
 Lemma counts_takes : forall fuel n f u, counts fuel n f u = true ->
-  exists v, takes n (f @ u) v.
+  exists v, takes n f u v.
 Proof.
   intros fuel n f u H; unfold counts in H.
   destruct (crun fuel f u) as [[v m]|] eqn:E; [|discriminate].
@@ -847,32 +819,32 @@ Lemma specialise_leaves_examples :
 Proof. split; apply ceqb_true; vm_compute; reflexivity. Qed.
 
 Lemma steps_infer_one :
-  (exists v, takes 132996 (infer paper_ontology @ one) v) /\
-  (exists v, takes 132996 (specialised_infer @ one) v).
+  (exists v, takes 132996 (infer paper_ontology) one v) /\
+  (exists v, takes 132996 specialised_infer one v).
 Proof. split; counted. Qed.
 
 Lemma steps_infer_employee :
-  (exists v, takes 755366 (infer paper_ontology @ employee_at 1 2) v) /\
-  (exists v, takes 755366 (specialised_infer @ employee_at 1 2) v).
+  (exists v, takes 755366 (infer paper_ontology) (employee_at 1 2) v) /\
+  (exists v, takes 755366 specialised_infer (employee_at 1 2) v).
 Proof. split; counted. Qed.
 
 Lemma steps_nat_abstractor :
-  exists v, takes 114179 (nat_abstractor @ 'S2['snd,'Nat]) v.
+  exists v, takes 114179 nat_abstractor ('S2['snd,'Nat]) v.
 Proof. counted. Qed.
 
 Lemma steps_bill :
-  exists v, takes 545335 (salary_bill @ department_example) v.
+  exists v, takes 545335 salary_bill department_example v.
 Proof. counted. Qed.
 
 (** A tester that is reached: typing the bill and the update. *)
 Lemma steps_infer_bill :
-  (exists v, takes 23680101 (infer paper_ontology @ salary_bill) v) /\
-  (exists v, takes 23620501 (specialised_infer @ salary_bill) v).
+  (exists v, takes 23680101 (infer paper_ontology) salary_bill v) /\
+  (exists v, takes 23620501 specialised_infer salary_bill v).
 Proof. split; counted. Qed.
 
 Lemma steps_infer_update :
-  (exists v, takes 15297806 (infer paper_ontology @ salary_update) v) /\
-  (exists v, takes 15238206 (specialised_infer @ salary_update) v).
+  (exists v, takes 15297806 (infer paper_ontology) salary_update v) /\
+  (exists v, takes 15238206 specialised_infer salary_update v).
 Proof. split; counted. Qed.
 
 (** * Sizes, as computed by [size] *)
