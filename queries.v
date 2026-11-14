@@ -74,7 +74,7 @@ Proof. intros; apply type_app_abstract; apply query_eliminator_eval. Qed.
 Theorem generic_query_application : forall AI q B x U,
   infer AI @ q ==> Sm ('Query[B]) ->
   infer AI @ x ==> Sm U ->
-  has_type AI (q @ x) B.
+  has_type AI q [x] B.
 Proof.
   intros AI q B x U Hq Hx; has_type_intro.
   - exact Hq.
@@ -168,7 +168,7 @@ Qed.
 Lemma get_query_eliminator_inv : forall E B,
   get_query_eliminator @ E ==> Sm B -> E = query_eliminator B.
 Proof.
-  intros E B H; pose proof (eval_deterministic _ _ H _ (get_query_eliminator_eval E)) as Heq.
+  intros E B H; pose proof (eval_deterministic _ _ _ H _ (get_query_eliminator_eval E)) as Heq.
   unfold get_query_eliminator_fn in Heq.
   destruct (ceqb _ _) eqn:Hc; [|discriminate].
   apply ceqb_true in Hc; inversion Heq; subst; exact Hc.
@@ -263,7 +263,7 @@ Proof.
   pose proof (query_handler_spec F0 F1 F2 Lf) as HH.
   unfold query_triage_fn; unfold query_handler_fn in *.
   destruct (_ && _)%bool;
-    repeat match goal with H : _ @r _ ==> _ |- _ => inv_out H end;
+    split_chains;
     unfold query_triage_case; qrun.
 Qed.
 Local Transparent query_handler.
@@ -376,7 +376,7 @@ Lemma query_triage_case_inv : forall C E,
     C = query_one_level B /\
     E = B.
 Proof.
-  intros C E H; pose proof (eval_deterministic _ _ H _ (query_triage_case_eval C)) as Heq.
+  intros C E H; pose proof (eval_deterministic _ _ _ H _ (query_triage_case_eval C)) as Heq.
   destruct C as [|x|[|a|F0 F1] F2]; cbn in Heq; try discriminate.
   unfold query_handler_fn in Heq.
   destruct (ceqb F1 _) eqn:H1; destruct (ceqb F2 _) eqn:H2; cbn in Heq; try discriminate.
@@ -406,7 +406,7 @@ Proof. intros; unfold abstractor_intro; evaluate. Qed.
 Lemma abstractor_at_eval : forall core a C v,
   core @ C @r a ==> v -> ('S2[core, 'K1 a]) @ C ==> v.
 Proof.
-  intros core a C v H; destruct (eval_appl_inv _ _ _ H) as [w [Hw Hw2]].
+  intros core a C v H; destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hw2]].
   repeat first [eassumption | progress evaluate].
 Qed.
 
@@ -432,7 +432,7 @@ Lemma clause_inv : forall p d C a E,
   (p @ C ==> Lf /\ d @ C @r a ==> Sm E).
 Proof.
   intros p d C a E Hf H.
-  destruct (eval_appl_inv _ _ _ H) as [W [HW Ha]].
+  destruct (eval_appl_inv _ _ _ _ H) as [W [HW Ha]].
   destruct (extend_inv _ _ _ _ HW) as [[k [Hk ->]]|[[HL Hd]|[l [r [Hl _]]]]].
   - left; eauto.
   - right; split; [exact HL|eapply eval_appl; eassumption].
@@ -454,11 +454,11 @@ Definition closed2 p := ('onStem1 ('onStem1 query_answer)) 'C p.
 Lemma query_found_eval : forall B, query_found @ B ==> Sm (query_eliminator B).
 Proof. intros; unfold query_found, query_eliminator; evaluate. Qed.
 Lemma query_found_inv : forall B E, query_found @ B ==> Sm E -> E = query_eliminator B.
-Proof. intros B E H; pose proof (eval_deterministic _ _ H _ (query_found_eval B)) as HE; inversion HE; reflexivity. Qed.
+Proof. intros B E H; pose proof (eval_deterministic _ _ _ H _ (query_found_eval B)) as HE; inversion HE; reflexivity. Qed.
 Lemma query_answer_eval : forall B, query_answer @ B ==> Sm ('K1 (Sm (query_eliminator B))).
 Proof. intros; unfold query_answer, query_eliminator; evaluate. Qed.
 Lemma query_answer_inv : forall B k, query_answer @ B ==> Sm k -> k = 'K1 (Sm (query_eliminator B)).
-Proof. intros B k H; pose proof (eval_deterministic _ _ H _ (query_answer_eval B)) as HE; inversion HE; reflexivity. Qed.
+Proof. intros B k H; pose proof (eval_deterministic _ _ _ H _ (query_answer_eval B)) as HE; inversion HE; reflexivity. Qed.
 Opaque query_answer query_found.
 
 Lemma closed1_hit : forall p C B a,
@@ -481,7 +481,7 @@ Lemma closed1_never_fork : forall p C l r, closed1 p @ C ==> Fk l r -> False.
 Proof.
   intros p C l r H; unfold closed1 in H; invert_eval.
   match goal with Hq : query_answer @ ?B ==> _ |- _ =>
-    pose proof (eval_deterministic _ _ Hq _ (query_answer_eval B)); discriminate end.
+    pose proof (eval_deterministic _ _ _ Hq _ (query_answer_eval B)); discriminate end.
 Qed.
 Lemma closed2_hit : forall p C B a,
   p @ C ==> Sm (Sm B) -> exists k, closed2 p @ C ==> Sm k /\ k @ a ==> Sm (query_eliminator B).
@@ -503,7 +503,7 @@ Lemma closed2_never_fork : forall p C l r, closed2 p @ C ==> Fk l r -> False.
 Proof.
   intros p C l r H; unfold closed2 in H; invert_eval.
   match goal with Hq : query_answer @ ?B ==> _ |- _ =>
-    pose proof (eval_deterministic _ _ Hq _ (query_answer_eval B)); discriminate end.
+    pose proof (eval_deterministic _ _ _ Hq _ (query_answer_eval B)); discriminate end.
 Qed.
 
 (** Applicative combination runs the type of the first query at the type
@@ -531,7 +531,7 @@ Proof.
   pose proof (get_query_some F).
   pose proof (get_query_some V).
   pose proof (query_found_eval B).
-  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
+  destruct (eval_appl_inv _ _ _ _ HA) as [w [Hw Hw2]].
   unfold query_S_case.
   Local Transparent get_query get_S_fields.
   fold get_query get_S_fields.
@@ -553,7 +553,7 @@ Proof.
   | Hget : get_query @ _ ==> Sm _ |- _ => apply get_query_inv in Hget; subst
   | Hget : get_S_fields @ _ ==> Sm (Fk _ _) |- _ => apply get_S_fields_inv in Hget; subst
   end.
-  repeat eexists; [eapply eval_appl; eassumption|].
+  do 3 eexists; split; [reflexivity|split; [eexists; split; eassumption|]].
   apply query_found_inv; assumption.
 Qed.
 
@@ -565,11 +565,11 @@ Proof. intros C l r H; unfold query_S_case in H; cbn in H; invert_eval. Qed.
 Local Opaque equal equal1 is_concrete get_wrap_payload_type.
 Local Ltac selection_eval :=
   first [eassumption |
-    match goal with |- ('I @ ?x) @r ?y ==> _ => eapply eval_appl; [apply I_eval | selection_eval] end |
+    match goal with |- 'I @ ?x @r ?y ==> _ => eapply eval_appl; [apply I_eval | selection_eval] end |
     (apply wait_eval; selection_eval) | apply equal_eval | apply equal1_eq |
     evaluate_expr_core selection_eval selection_head | idtac]
 with selection_head := first [eassumption |
-    match goal with |- ('I @ ?x) @r ?y ==> _ => eapply eval_appl; [apply I_eval | selection_eval] end |
+    match goal with |- 'I @ ?x @r ?y ==> _ => eapply eval_appl; [apply I_eval | selection_eval] end |
     (apply wait_eval; selection_eval) | apply equal_eval | apply equal1_eq |
     evaluate_head_core selection_eval | idtac].
 Definition query_diagonal_fields := Eval cbv -[get_query equal1] in to_tree
@@ -686,7 +686,7 @@ Proof.
   pose proof (query_found_eval B).
   pose proof (equal_eval (Sm ('Query[B]))).
   pose proof (equal1_eq (Sm ('Query[B]))).
-  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
+  destruct (eval_appl_inv _ _ _ _ HA) as [w [Hw Hw2]].
   unfold query_fix_case.
   Local Transparent get_query.
   fold get_query.
@@ -714,7 +714,7 @@ Proof.
     destruct (equal_spec _ _ _ HE) as [[HB HU]|[HB HU]];
     subst b; invert_eval
   end.
-  repeat eexists; [eapply eval_appl; eassumption|].
+  do 2 eexists; split; [reflexivity|split; [eexists; split; eassumption|]].
   apply query_found_inv; assumption.
 Qed.
 
@@ -810,7 +810,7 @@ Proof.
   pose proof (proj2 (is_concrete_true N) HN).
   pose proof (get_wrap_payload_type_some AI N T HI).
   pose proof (equal1_eq (Sm B)).
-  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
+  destruct (eval_appl_inv _ _ _ _ HA) as [w [Hw Hw2]].
   unfold choice_constructor, query_eliminator.
   unfold wrap_type, wrap_eliminator in *.
   eexists; split; run.
@@ -828,7 +828,7 @@ Proof.
   all: repeat progress recognizer_eqtac.
   all: match goal with Hc : is_concrete @ ?N ==> ?b |- _ =>
     pose proof (is_concrete_spec N) as HC;
-    pose proof (eval_deterministic _ _ Hc _ HC) as HB;
+    pose proof (eval_deterministic _ _ _ Hc _ HC) as HB;
     destruct (concreteb N) eqn:HN; cbn in HB; subst b; invert_eval end.
   all: repeat progress recognizer_eqtac.
   all: repeat match goal with
@@ -1026,8 +1026,8 @@ Lemma query_abstractor_applied : forall AI C v,
   query_abstractor_at AI @ C ==> v.
 Proof.
   intros AI C v HS H; destruct (declaration_apply_inv _ _ _ _ _ H) as [R [D [HR [HD Hv]]]].
-  pose proof (eval_deterministic _ _ HR _ HS) as ->.
-  pose proof (eval_deterministic _ _ HD _ (query_abstractor_partial AI)) as ->; exact Hv.
+  pose proof (eval_deterministic _ _ _ HR _ HS) as ->.
+  pose proof (eval_deterministic _ _ _ HD _ (query_abstractor_partial AI)) as ->; exact Hv.
 Qed.
 
 Lemma app_tagged_query : forall AI C E,
@@ -1116,7 +1116,7 @@ Lemma query_abstractor_value_sound : forall AI,
 Proof.
   intros AI HS n C E U V c v w HC HE Hc Hv He Ht.
   destruct (query_one_level_decide C) as [[B ->]|Hq].
-  - pose proof (eval_deterministic _ _ HC _ (query_abstractor_triage AI B)) as HE';
+  - pose proof (eval_deterministic _ _ _ HC _ (query_abstractor_triage AI B)) as HE';
       inversion HE'; subst E.
     apply query_eliminator_inv in HE; subst V.
     eapply query_one_level_value_typing; eassumption.
@@ -1150,8 +1150,8 @@ Lemma query_case_never_fork : forall AI N left right,
 Proof.
   intros AI N left right H.
   destruct (combination_eq_dec N query_nm) as [-> | Hneq].
-  - pose proof (eval_deterministic _ _ H _ (query_case_some AI)); discriminate.
-  - pose proof (eval_deterministic _ _ H _ (query_case_none AI N Hneq)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (query_case_some AI)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (query_case_none AI N Hneq)); discriminate.
 Qed.
 
 
@@ -1437,7 +1437,7 @@ Opaque equal.
 Lemma size_application_typed : forall (AI : Decl) x X,
   supports_queries AI -> supports_number AI ->
   infer AI @ x ==> Sm X ->
-  has_type AI (size @ x) ('Nat).
+  has_type AI size [x] ('Nat).
 Proof.
   intros AI x X Hq Hn Hx; has_type_intro.
   - apply infer_size; assumption.
@@ -2042,7 +2042,7 @@ Qed.
 Lemma equal_application_typed : forall (AI : Decl) x X,
   supports_queries AI -> supports_booleans AI ->
   infer AI @ x ==> Sm X ->
-  has_type AI (typed_equal @ x) ('Query['Bool]).
+  has_type AI typed_equal [x] ('Query['Bool]).
 Proof.
   intros AI x X Hq Hb Hx; has_type_intro.
   - apply infer_typed_equal; assumption.
@@ -2053,7 +2053,7 @@ Qed.
 Lemma equal_application2_typed : forall (AI : Decl) x X y Y,
   supports_queries AI -> supports_booleans AI ->
   infer AI @ x ==> Sm X -> infer AI @ y ==> Sm Y ->
-  has_type AI (typed_equal @ x @r y) ('Bool).
+  has_type AI typed_equal [x; y] ('Bool).
 Proof.
   intros AI x X y Y Hq Hb Hx Hy; has_type_intro.
   - eapply equal_application_typed; eassumption.

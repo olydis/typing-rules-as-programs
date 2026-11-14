@@ -33,7 +33,7 @@ Qed.
 (** The identity is implicitly polymorphic: it applies at every type. *)
 Theorem identity_polymorphic : forall AI u U,
   infer AI @ u ==> Sm U ->
-  has_type AI ('I @ u) U.
+  has_type AI 'I [u] U.
 Proof.
   intros AI u U Hu; has_type_intro.
   - apply infer_I.
@@ -292,10 +292,10 @@ Lemma cdither_concrete : concrete cdither.
 Proof. apply Z_preserves_concrete; apply concreteb_sound; vm_compute; reflexivity. Qed.
 
 Lemma compose_evaln_inv : forall n g f x v,
-  evaln n ((g 'C f) @ x) v -> exists m w, m < n /\ evaln m (f @ x) w.
+  evaln n (g 'C f) x v -> exists m w, m < n /\ evaln m f x w.
 Proof.
   intros n g f x v H; invert_evaln.
-  match goal with H : evaln ?m (f @ x) ?w |- _ => exists m, w; split; [lia|exact H] end.
+  match goal with H : evaln ?m f x ?w |- _ => exists m, w; split; [lia|exact H] end.
 Qed.
 
 Lemma cdither_step : cdither_body @ cdither ==> cneg 'C cdither.
@@ -304,12 +304,12 @@ Proof. unfold cdither_body; cbn; d_eval. Qed.
 Lemma cdither_no_value : forall x v, ~ (cdither @ x ==> v).
 Proof.
   intros x v H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evaln _ _ _ H) as [n Hn]; clear H.
   revert v Hn.
   induction n as [n IH] using lt_wf_ind; intros v Hn.
   unfold cdither at 1 in Hn.
   destruct (Z_evaln_unfold_inv _ _ _ _ Hn) as [m2 [w [Hm2 [Hw H2]]]].
-  pose proof (eval_deterministic _ _ Hw _ cdither_step) as Heq; subst w.
+  pose proof (eval_deterministic _ _ _ Hw _ cdither_step) as Heq; subst w.
   destruct (compose_evaln_inv _ _ _ _ _ H2) as [m3 [w [Hm3 H3]]].
   exact (IH m3 ltac:(lia) w H3).
 Qed.

@@ -40,7 +40,7 @@ Proof. intros; apply type_app_array_append; assumption. Qed.
 Lemma infer_append_rows : forall AI xs ys A m p n,
   supports_arrays AI -> infer AI @ xs ==> Sm (Matrix A m n) ->
   infer AI @ ys ==> Sm (Matrix A p n) ->
-  has_type AI (array_append @ (xs '* ys)) (Matrix A (index_sum m p) n).
+  has_type AI array_append [xs '* ys] (Matrix A (index_sum m p) n).
 Proof. intros; apply infer_array_append_application; assumption. Qed.
 Lemma append_rows_wrong_width : forall A n q m p,
   unary_index n -> unary_index q -> n <> q ->
@@ -128,7 +128,7 @@ Lemma infer_matrix_map_specialisation : forall ar br a b f A B F m n,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B ->
   unary_index m -> unary_index n ->
-  has_type AI (map_matrix ar br a b f @ m @r n) (Matrix A m n --> Matrix B m n).
+  has_type AI (map_matrix ar br a b f) [m; n] (Matrix A m n --> Matrix B m n).
 Proof using AI HL HA.
   intros ar br a b f A B F m n Har Hbr Ha Hb Hf HFA Hm Hn.
   destruct (infer_map_matrix ar br a b f A B F n Har Hbr Ha Hb Hf HFA)
@@ -147,7 +147,7 @@ Lemma infer_matrix_map_application : forall ar br a b f A B F m n xs,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B ->
   unary_index m -> unary_index n -> infer AI @ xs ==> Sm (Matrix A m n) ->
-  has_type AI (map_matrix ar br a b f @ m @r n @r xs) (Matrix B m n).
+  has_type AI (map_matrix ar br a b f) [m; n; xs] (Matrix B m n).
 Proof using AI HL HA.
   intros ar br a b f A B F m n xs Har Hbr Ha Hb Hf HFA Hm Hn HX.
   has_type_intro.
@@ -269,7 +269,7 @@ Proof.
   pose proof (array_builder_list m a a List.nil) as Hcolumn.
   pose proof (take_array_program_list row m row List.nil) as Hmatrix.
   pose proof (read_array_eval a n); pose proof (read_array_program_eval row m) as Hread.
-  destruct (eval_appl_inv _ _ _ (map_with_specialises (array_reader a n) (nil_value a))) as [mw [Hmap Hmap2]].
+  destruct (eval_appl_inv _ _ _ _ (map_with_specialises (array_reader a n) (nil_value a))) as [mw [Hmap Hmap2]].
   pose proof (columns_specialises a (array_builder a m) column) as Hcols.
   pose proof (columns_eval a (array_builder a m) column n).
   pose proof (take_array_specialises row).
@@ -385,7 +385,7 @@ Proof using AI HL HA.
 Defined.
 Lemma infer_transpose_specialisation : forall a A m n,
   infer AI @ a ==> Sm A -> unary_index m -> unary_index n ->
-  has_type AI (transpose a @ m @r n) (Matrix A m n --> Matrix A n m).
+  has_type AI (transpose a) [m; n] (Matrix A m n --> Matrix A n m).
 Proof using AI HL HA.
   intros a A m n Ha Hm Hn; destruct (infer_transpose a A Ha) as [T [HT HMT]].
   destruct (HMT m Hm) as [F [HFm HFn]].
@@ -400,7 +400,7 @@ Qed.
 Lemma infer_transpose_application : forall a A m n xs,
   infer AI @ a ==> Sm A -> unary_index m -> unary_index n ->
   infer AI @ xs ==> Sm (Matrix A m n) ->
-  has_type AI (transpose a @ m @r n @r xs) (Matrix A n m).
+  has_type AI (transpose a) [m; n; xs] (Matrix A n m).
 Proof using AI HL HA.
   intros a A m n xs Ha Hm Hn HX; has_type_intro.
   - eapply infer_transpose_specialisation; eassumption.
@@ -652,7 +652,7 @@ Proof.
       repeat first [apply Forall_cons|apply Forall_nil|apply conj|reflexivity];
       apply numeral_typed; apply array_ontology_supports_number.
 Qed.
-Example transpose_example_typed : has_type array_ontology (transpose zero @ Sm (Sm Lf) @r Sm (Sm (Sm Lf)) @r transpose_example_input) (Matrix ('Nat) (Sm (Sm (Sm Lf))) (Sm (Sm Lf))).
+Example transpose_example_typed : has_type array_ontology (transpose zero) [Sm (Sm Lf); Sm (Sm (Sm Lf)); transpose_example_input] (Matrix ('Nat) (Sm (Sm (Sm Lf))) (Sm (Sm Lf))).
 Proof.
    apply infer_transpose_application.
 
@@ -672,10 +672,9 @@ Example transpose_example_preserved :
   infer array_ontology @ transpose_example_output ==>
     Sm (Matrix ('Nat) (Sm (Sm (Sm Lf))) (Sm (Sm Lf))).
 Proof.
-   eapply array_ontology_EPT.
-
-  - apply transpose_example_eval.
+   eapply array_ontology_EPT; cycle 1.
   - apply transpose_example_typed.
+  - apply transpose_example_eval.
 Qed.
 Example transpose_example_twice :
   exists middle,
@@ -715,7 +714,7 @@ Proof.
   - apply number_row_typed.
   - unfold number_rows; repeat first [apply Forall_cons|apply Forall_nil|apply conj|reflexivity]; apply numeral_typed; apply array_ontology_supports_number.
 Qed.
-Example matrix_map_changes_element_type : has_type array_ontology (map_matrix number_row leaf_row zero Lf ('K1 Lf) @ two_index @r two_index @r number_matrix) (Matrix Lf two_index two_index).
+Example matrix_map_changes_element_type : has_type array_ontology (map_matrix number_row leaf_row zero Lf ('K1 Lf)) [two_index; two_index; number_matrix] (Matrix Lf two_index two_index).
 Proof.
    eapply infer_matrix_map_application.
 
@@ -746,7 +745,7 @@ Proof.
     repeat first [apply Forall2_cons|apply Forall2_nil|progress evaluate].
 Qed.
 
-Example matrix_map_zero_rows : has_type array_ontology (map_matrix number_row leaf_row zero Lf ('K1 Lf) @ Lf @r two_index @r arrays.empty number_row) (Matrix Lf Lf two_index).
+Example matrix_map_zero_rows : has_type array_ontology (map_matrix number_row leaf_row zero Lf ('K1 Lf)) [Lf; two_index; arrays.empty number_row] (Matrix Lf Lf two_index).
 Proof.
    eapply infer_matrix_map_application.
 
@@ -780,7 +779,7 @@ Proof.
     all: apply infer_empty;
       [apply array_ontology_support|apply infer_zero; apply array_ontology_supports_number].
 Qed.
-Example matrix_map_zero_columns : has_type array_ontology (map_matrix (arrays.empty zero) (arrays.empty Lf) zero Lf ('K1 Lf) @ two_index @r Lf @r zero_column_matrix) (Matrix Lf two_index Lf).
+Example matrix_map_zero_columns : has_type array_ontology (map_matrix (arrays.empty zero) (arrays.empty Lf) zero Lf ('K1 Lf)) [two_index; Lf; zero_column_matrix] (Matrix Lf two_index Lf).
 Proof.
    eapply infer_matrix_map_application.
 
@@ -805,10 +804,9 @@ Proof. apply append_rows_wrong_width; try (repeat (first [unary_tac|constructor]
 
 Example mapped_matrix_preserved : infer array_ontology @ leaf_matrix ==> Sm (Matrix Lf two_index two_index).
 Proof.
-   eapply array_ontology_EPT.
-
-  - apply matrix_map_changes_element_type_eval.
+   eapply array_ontology_EPT; cycle 1.
   - apply matrix_map_changes_element_type.
+  - apply matrix_map_changes_element_type_eval.
 Qed.
 
 
@@ -987,8 +985,8 @@ Proof.
     + apply type_app_K_ev.
     + apply type_app_stem_ev; apply type_app_stem_structural; intros; discriminate.
     + apply type_app_stem_ev; apply type_app_stem_structural; intros; discriminate. }
-  pose proof (eval_deterministic _ _ H1 _ Ha) as E1; inversion E1; subst a.
-  pose proof (eval_deterministic _ _ H2 _ Hb) as E2; inversion E2; subst b.
+  pose proof (applied_deterministic _ _ _ H1 _ Ha) as E1; inversion E1; subst a.
+  pose proof (applied_deterministic _ _ _ H2 _ Hb) as E2; inversion E2; subst b.
   apply type_app_stem_inv in H3.
   apply type_app_stem_tagged_success_inv in H3.
   destruct H3 as [E [HE _]]; exists E; exact HE.
@@ -1001,18 +999,18 @@ Proof.
   intros AI A B n m V HA Hne H.
   unfold array_append in H; cbn in H.
   invert_S H a b H1 H2 H3.
-  pose proof (eval_deterministic _ _ H1 _ (type_app_K_ev AI _ _)) as E1; inversion E1; subst a.
+  pose proof (applied_deterministic _ _ _ H1 _ (type_app_K_ev AI _ _)) as E1; inversion E1; subst a.
   assert (Hb : type_app AI @ 'S2 [Lf 'C (Lf 'C ('K 'C 'snd)), 'fst] @r (Array A n '* Array B m)
       ==> Sm (Array B m 'C Array A n)).
   { pose proof (type_app_fst_product AI) as Hf; pose proof (type_app_snd_product AI) as Hs.
     repeat ty. }
-  pose proof (eval_deterministic _ _ H2 _ Hb) as E2; inversion E2; subst b.
+  pose proof (applied_deterministic _ _ _ H2 _ Hb) as E2; inversion E2; subst b.
   destruct (type_app_tagger_inv AI _ _ _ H3) as [E HE].
   destruct (declaration_apply_inv _ _ _ _ _ HE) as [R [D [H4 [H5 H6]]]].
-  pose proof (eval_deterministic _ _ H4 _ HA) as E3; subst R.
+  pose proof (eval_deterministic _ _ _ H4 _ HA) as E3; subst R.
   assert (H7 : ('K1 array_abstractor) @ type_app AI ==> array_abstractor) by evaluate.
-  pose proof (eval_deterministic _ _ H5 _ H7) as E4; subst D.
-  pose proof (eval_deterministic _ _ H6 _ (array_abstractor_wrong_domain A B n m Hne)) as E5.
+  pose proof (eval_deterministic _ _ _ H5 _ H7) as E4; subst D.
+  pose proof (eval_deterministic _ _ _ H6 _ (array_abstractor_wrong_domain A B n m Hne)) as E5.
   discriminate E5.
 Qed.
 
@@ -1026,7 +1024,7 @@ Proof.
   clear H1 H3.
   unfold checked_rows in H2.
   invert_S H2 a2 b2 H4 H5 H6.
-  pose proof (eval_deterministic _ _ H4 _ (type_app_K_ev AI _ _)) as E1; inversion E1; subst a2.
+  pose proof (applied_deterministic _ _ _ H4 _ (type_app_K_ev AI _ _)) as E1; inversion E1; subst a2.
   pose proof (unary_stem _ Hk) as Hk'.
   eapply (array_append_refused AI (Array ('Nat) (Sm k)) (Array ('Nat) (Sm n)) Lf (Sm m) b HA); [|].
   - intro HE; apply Hne.
@@ -1036,7 +1034,7 @@ Proof.
     pose proof (type_app_mk_zero AI HN) as H0.
     pose proof (type_app_array_map AI HA _ _ _ _ Hk' (H0 (Array ('Nat) (Sm p)))) as HW.
     assert (Hb : Sm b2 = Sm (Array (Array ('Nat) (Sm k)) Lf '* Array (Array ('Nat) (Sm n)) (Sm m))).
-    { eapply eval_deterministic; [exact H5|].
+    { eapply applied_deterministic; [exact H5|].
       unfold Matrix0, Matrix in *; repeat ty; apply H0. }
     inversion Hb; subst b2; exact H6.
 Qed.
@@ -1210,7 +1208,7 @@ Theorem infer_matrix_mult_application : forall m n p xs ys,
  unary_index m -> unary_index n -> unary_index p ->
  infer AI @ xs ==> Sm (Matrix0 m n) ->
  infer AI @ ys ==> Sm (Matrix0 n p) ->
- has_type AI (matrix_mult @ (xs '* ys)) (Matrix0 m p).
+ has_type AI matrix_mult [xs '* ys] (Matrix0 m p).
 Proof using AI HA HN.
  intros m n p xs ys Hm Hn Hp HX HY.
  assert (HT : infer AI @ (xs '* ys) ==> Sm (Matrix0 m n '* Matrix0 n p))
@@ -1223,7 +1221,7 @@ End ApplicationTyping.
 Lemma infer_dot_application : forall (AI : Decl) n xs ys,
   supports_arrays AI -> supports_number AI -> unary_index n ->
   infer AI @ xs ==> Sm (Array ('Nat) n) -> infer AI @ ys ==> Sm (Array ('Nat) n) ->
-  has_type AI (dot @ (xs '* ys)) ('Nat).
+  has_type AI dot [xs '* ys] ('Nat).
 Proof.
   intros AI n xs ys HA HN Hn HX HY; eapply infer_application;
     [apply infer_dot|apply infer_product_value; eassumption|apply type_app_dot; assumption].
@@ -1240,7 +1238,7 @@ Proof.
   - induction ns; cbn [List.map]; constructor; [|exact IHns].
     apply numeral_typed; apply array_ontology_supports_number.
 Qed.
-Example dot_example_typed : has_type array_ontology (dot @ (dot_example_left '* dot_example_right)) ('Nat).
+Example dot_example_typed : has_type array_ontology dot [dot_example_left '* dot_example_right] ('Nat).
 Proof.
   apply infer_dot_application with (n := Sm (Sm (Sm Lf))).
   - apply array_ontology_support.
@@ -1257,9 +1255,9 @@ Proof. exact (dot_numerals List.nil List.nil zero zero eq_refl). Qed.
 Example dot_example_preserved :
   infer array_ontology @ numeral 32 ==> Sm ('Nat).
 Proof.
-   eapply array_ontology_EPT.
-  - apply dot_example_eval.
+   eapply array_ontology_EPT; cycle 1.
   - apply dot_example_typed.
+  - apply dot_example_eval.
 Qed.
 
 (** Multiply [1,2,3; 4,5,6] by [1,4; 2,5; 3,6]. *)
@@ -1281,7 +1279,7 @@ Proof.
     (array_value_reads _ _) ltac:(repeat constructor) ltac:(repeat constructor)).
 Qed.
 Example matrix_mult_example_typed :
- has_type array_ontology (matrix_mult @ (transpose_example_input '* transpose_example_output)) (Matrix0 (Sm Lf) (Sm Lf)).
+ has_type array_ontology matrix_mult [transpose_example_input '* transpose_example_output] (Matrix0 (Sm Lf) (Sm Lf)).
 Proof.
   apply infer_matrix_mult_application with (n := Sm (Sm Lf)).
   - apply array_ontology_support.
@@ -1296,9 +1294,9 @@ Example matrix_mult_example_preserved :
  infer array_ontology @ matrix_product_example_result ==>
  Sm (Matrix ('Nat) (Sm (Sm Lf)) (Sm (Sm Lf))).
 Proof.
-  eapply array_ontology_EPT.
- - apply matrix_mult_example_eval.
+  eapply array_ontology_EPT; cycle 1.
  - apply matrix_mult_example_typed.
+ - apply matrix_mult_example_eval.
 Qed.
 (** Paper notation: [Matrix[m,n]]. *)
 Notation "'Matrix [ m , n ]" := (Matrix ('Nat) m n) (at level 0, only parsing).

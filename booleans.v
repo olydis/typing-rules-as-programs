@@ -103,10 +103,10 @@ Proof.
         by (eapply eval_deterministic;
             [exact Hwhole | apply get_K1_some]).
       inversion H0; reflexivity.
-    + pose proof (eval_deterministic _ _ Hwhole _
+    + pose proof (eval_deterministic _ _ _ Hwhole _
         (get_K1_none_left (Sm X1) X2 ltac:(discriminate)));
         discriminate.
-    + pose proof (eval_deterministic _ _ Hwhole _
+    + pose proof (eval_deterministic _ _ _ Hwhole _
         (get_K1_none_left (Fk X11 X12) X2 ltac:(discriminate)));
         discriminate.
 Qed.
@@ -434,12 +434,12 @@ Lemma bool_abstractor_inv : forall C R,
 Proof.
   intros C R H.
   destruct (combination_eq_dec C 'fst) as [-> | Hfst].
-  - pose proof (eval_deterministic _ _ H _ bool_abstractor_fst) as HX.
+  - pose proof (eval_deterministic _ _ _ H _ bool_abstractor_fst) as HX.
     inversion HX; auto.
   - destruct (combination_eq_dec C 'snd) as [-> | Hsnd].
-    + pose proof (eval_deterministic _ _ H _ bool_abstractor_snd) as HX.
+    + pose proof (eval_deterministic _ _ _ H _ bool_abstractor_snd) as HX.
       inversion HX; auto.
-    + pose proof (eval_deterministic _ _ H _
+    + pose proof (eval_deterministic _ _ _ H _
         (bool_abstractor_none C (not_eq_sym Hfst) (not_eq_sym Hsnd))).
       discriminate.
 Qed.

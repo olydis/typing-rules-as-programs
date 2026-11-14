@@ -99,7 +99,7 @@ Lemma append_program_typed : forall (AI : Decl) d e A xs ys,
   supports_arrays AI -> infer AI @ d ==> Sm A -> infer AI @ e ==> Sm A ->
   Forall (fun x => infer AI @ x ==> Sm A) xs ->
   Forall (fun x => infer AI @ x ==> Sm A) ys ->
-  has_type AI (array_append @ (array_value d xs '* array_value e ys)) (Array A (sequence_index (xs ++ ys))).
+  has_type AI array_append [array_value d xs '* array_value e ys] (Array A (sequence_index (xs ++ ys))).
 Proof.
   intros; rewrite sequence_index_append; apply infer_array_append_application;
     auto using array_value_typed.
@@ -143,7 +143,7 @@ Proof.
   pose proof (HF Datatypes.nil (Forall_nil _)) as Hzero.
   assert (Hone : type_app AI @ F @r ('List[A]) ==> Sm (Array A (Sm Lf))).
   { apply (HF (Datatypes.cons a Datatypes.nil)); constructor; auto. }
-  pose proof (eval_deterministic _ _ Hzero _ Hone) as Hsame.
+  pose proof (applied_deterministic _ _ _ Hzero _ Hone) as Hsame.
   discriminate Hsame.
 Qed.
 
@@ -463,7 +463,7 @@ Qed.
 Lemma infer_take_array_application : forall b B n,
   supports_list AI -> supports_arrays AI ->
   infer AI @ b ==> Sm B -> unary_index n ->
-  has_type AI (take_array b @ n) ('List[B] --> Array B n).
+  has_type AI (take_array b) [n] ('List[B] --> Array B n).
 Proof using AI.
   intros b B n HL HA Hb Hn.
   destruct (take_array_application b B HL HA Hb) as [G [HG Happ]].
@@ -477,7 +477,7 @@ Lemma infer_take_array_list_application : forall b B n xs,
   supports_list AI -> supports_arrays AI ->
   infer AI @ b ==> Sm B -> unary_index n ->
   infer AI @ xs ==> Sm ('List[B]) ->
-  has_type AI (take_array b @ n @r xs) (Array B n).
+  has_type AI (take_array b) [n; xs] (Array B n).
 Proof using AI.
   intros b B n xs HL HA Hb Hn Hxs.
   has_type_intro.
@@ -583,7 +583,7 @@ Proof using AI HL.
 Qed.
 Lemma infer_collect_array_application : forall a A n,
   infer AI @ a ==> Sm A -> unary_index n ->
-  has_type AI (collect_array a @ n) ('List[A] --> consumer_type A n ('List[A])).
+  has_type AI (collect_array a) [n] ('List[A] --> consumer_type A n ('List[A])).
 Proof using AI HL.
   intros a A n Ha Hn; has_type_intro.
   - apply (infer_collect_array a A Ha).
@@ -681,7 +681,7 @@ Proof using AI HL HA.
 Defined.
 Lemma infer_read_array_application : forall a A n,
   infer AI @ a ==> Sm A -> unary_index n ->
-  has_type AI (read_array a @ n) (Array A n --> 'List[A]).
+  has_type AI (read_array a) [n] (Array A n --> 'List[A]).
 Proof using AI HL HA.
   intros a A n Ha Hn; destruct (infer_read_array a A Ha) as [R [HR HT]].
   has_type_intro.
@@ -692,7 +692,7 @@ Qed.
 Lemma infer_read_array_array : forall a A n xs,
   infer AI @ a ==> Sm A -> unary_index n ->
   infer AI @ xs ==> Sm (Array A n) ->
-  has_type AI (read_array a @ n @r xs) ('List[A]).
+  has_type AI (read_array a) [n; xs] ('List[A]).
 Proof using AI HL HA.
   intros a A n xs Ha Hn HX; has_type_intro.
   - eapply infer_read_array_application; eassumption.
@@ -723,7 +723,7 @@ Lemma reader_consumer_sequence : forall a xs,
 Proof.
   intros a [|x xs]; [constructor|].
   destruct (array_collector_sequence a (x :: xs) List.nil) as [c [HC HS]].
-  pose proof (eval_deterministic _ _ HC _
+  pose proof (eval_deterministic _ _ _ HC _
     (array_collector_successor a (sequence_index xs) (nil_value a))) as HE.
   subst c; exact HS.
 Qed.
@@ -891,7 +891,7 @@ Defined.
 (** These theorems type the program applied to its witness. *)
 Lemma infer_take_array_witness : forall a A n,
   infer AI @ a ==> Sm A -> unary_index n ->
-  has_type AI (take_array_program @ a @r n) ('List[A] --> Array A n).
+  has_type AI take_array_program [a; n] ('List[A] --> Array A n).
 Proof using AI HL HA.
   intros a A n He Hn.
   destruct infer_take_array_program as [T [HT HTA]].
@@ -906,7 +906,7 @@ Proof using AI HL HA.
 Qed.
 Lemma infer_read_array_witness : forall a A n,
   infer AI @ a ==> Sm A -> unary_index n ->
-  has_type AI (read_array_program @ a @r n) (Array A n --> 'List[A]).
+  has_type AI read_array_program [a; n] (Array A n --> 'List[A]).
 Proof using AI HL HA.
   intros a A n He Hn.
   destruct infer_read_array_program as [T [HT HTA]].
@@ -922,7 +922,7 @@ Qed.
 
 Lemma infer_take_array_program_application : forall a A n xs,
   infer AI @ a ==> Sm A -> unary_index n -> infer AI @ xs ==> Sm ('List[A]) ->
-  has_type AI (take_array_program @ a @r n @r xs) (Array A n).
+  has_type AI take_array_program [a; n; xs] (Array A n).
 Proof using AI HL HA.
   intros a A n xs Ha Hn HX; has_type_intro.
   - apply infer_take_array_witness; [exact Ha|exact Hn].
@@ -931,7 +931,7 @@ Proof using AI HL HA.
 Qed.
 Lemma infer_read_array_program_application : forall a A n xs,
   infer AI @ a ==> Sm A -> unary_index n -> infer AI @ xs ==> Sm (Array A n) ->
-  has_type AI (read_array_program @ a @r n @r xs) ('List[A]).
+  has_type AI read_array_program [a; n; xs] ('List[A]).
 Proof using AI HL HA.
   intros a A n xs Ha Hn HX; has_type_intro.
   - apply infer_read_array_witness; [exact Ha|exact Hn].
@@ -990,7 +990,7 @@ Lemma infer_map_array_via_lists : forall (AI : Decl) read build m xs A B F n,
   type_app AI @ F @r A ==> Sm B ->
   infer AI @ m ==> Sm (foldright_value (map_step_value F) ('List[B])) ->
   infer AI @ xs ==> Sm (Array A n) ->
-  has_type AI (map_via_lists @ read @r build @r m @r xs) (Array B n).
+  has_type AI map_via_lists [read; build; m; xs] (Array B n).
 Proof.
   intros AI read build m xs A B F n HL Hr Hw HFA Hm Hxs.
   destruct (type_app_map_via_lists AI A B n _ (type_app_map_value AI HL F A B HFA))
@@ -1049,7 +1049,7 @@ Defined.
 Lemma infer_map_array_specialisation : forall a b f A B F n,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
-  has_type AI (map_array a b f @ n) (Array A n --> Array B n).
+  has_type AI (map_array a b f) [n] (Array A n --> Array B n).
 Proof using AI HL HA.
   intros a b f A B F n Ha Hb Hf HFA Hn.
   destruct (infer_map_array a b f A B F Ha Hb Hf HFA) as [M [HM HMT]].
@@ -1062,7 +1062,7 @@ Lemma infer_map_array_application : forall a b f A B F n xs,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
   infer AI @ xs ==> Sm (Array A n) ->
-  has_type AI (map_array a b f @ n @r xs) (Array B n).
+  has_type AI (map_array a b f) [n; xs] (Array B n).
 Proof using AI HL HA.
   intros a b f A B F n xs Ha Hb Hf HFA Hn HX.
   has_type_intro.
@@ -1148,7 +1148,7 @@ Defined.
 Lemma infer_map_array_with_function : forall a b A B F f n,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
-  has_type AI (map_array_with a b @ f @r n) (Array A n --> Array B n).
+  has_type AI (map_array_with a b) [f; n] (Array A n --> Array B n).
 Proof using AI HL HA.
   intros a b A B F f n Ha Hb He HFA Hn.
   destruct (infer_map_array_with a b A B Ha Hb) as [M [HM HMT]].
@@ -1204,7 +1204,7 @@ Example take_two_truncates : forall b x y z,
 Proof. intros; apply take_array_list. Qed.
 
 (** Instantiate the support obligations with the live, sound declarations. *)
-Example all_take_two_padded : has_type array_ontology (take_array Lf @ Sm (Sm Lf) @r nil_value Lf) (Array Lf (Sm (Sm Lf))).
+Example all_take_two_padded : has_type array_ontology (take_array Lf) [Sm (Sm Lf); nil_value Lf] (Array Lf (Sm (Sm Lf))).
 Proof.
    apply infer_take_array_list_application.
 
@@ -1219,10 +1219,9 @@ Example all_take_two_padded_preserved :
   infer array_ontology @ array_value Lf (Lf :: Lf :: List.nil) ==>
     Sm (Array Lf (Sm (Sm Lf))).
 Proof.
-   eapply array_ontology_EPT.
-
-  - exact (take_array_list Lf (Sm (Sm Lf)) Lf List.nil).
+   eapply array_ontology_EPT; cycle 1.
   - apply all_take_two_padded.
+  - exact (take_array_list Lf (Sm (Sm Lf)) Lf List.nil).
 Qed.
 
 
@@ -1232,18 +1231,17 @@ Example computed_witness_typed :
   infer array_ontology @ array_value Lf (array_elements Lf (Sm (Sm Lf)) List.nil) ==>
     Sm (Array Lf (Sm (Sm Lf))).
 Proof.
-  eapply array_ontology_EPT.
-  - apply (take_array_program_list Lf (Sm (Sm Lf)) Lf List.nil).
+  eapply array_ontology_EPT; cycle 1.
   - apply infer_take_array_program_application.
     + apply array_ontology_supports_list.
     + apply array_ontology_support.
     + apply infer_leaf.
     + first [unary_tac|repeat constructor].
     + apply infer_nil_value; [apply array_ontology_supports_list|apply infer_leaf].
+  - apply (take_array_program_list Lf (Sm (Sm Lf)) Lf List.nil).
 Qed.
 Example computed_witness_reader_typed :
-  has_type array_ontology
-    (read_array_program @ array_value Lf (array_elements Lf (Sm (Sm Lf)) List.nil) @r Lf)
+  has_type array_ontology read_array_program [array_value Lf (array_elements Lf (Sm (Sm Lf)) List.nil); Lf]
     (Array (Array Lf (Sm (Sm Lf))) Lf --> 'List[Array Lf (Sm (Sm Lf))]).
 Proof.
   apply infer_read_array_witness.
@@ -1264,8 +1262,8 @@ End FunctionEnabledExamples.
 
 (** Arrays use the same declarations as the generic and other data families. *)
 Example all_arrays_append_two_singletons :
-  has_type array_ontology (array_append @ (arrays.prepend Lf (arrays.empty Lf)
-      '* arrays.prepend Lf (arrays.empty Lf))) (Array Lf (Sm (Sm Lf))).
+  has_type array_ontology array_append [arrays.prepend Lf (arrays.empty Lf)
+      '* arrays.prepend Lf (arrays.empty Lf)] (Array Lf (Sm (Sm Lf))).
 Proof.
   eapply infer_array_append_application with (n := Sm Lf) (m := Sm Lf);
     repeat first [apply array_ontology_support|apply arrays.infer_prepend|
@@ -1333,8 +1331,8 @@ Proof.
   apply (proj2 (structural_triage_plain _ _ _ _ _ _ HP)).
   unfold plain_triage, structural_fork.
   pose proof (get_tagged_none _ HX).
-  destruct (eval_appl_inv _ _ _ H1) as [w [Hw HR]].
-  destruct (eval_appl_inv _ _ _ H2) as [w2 [Hw2 HR2]].
+  destruct (eval_appl_inv _ _ _ _ H1) as [w [Hw HR]].
+  destruct (eval_appl_inv _ _ _ _ H2) as [w2 [Hw2 HR2]].
   cbn; repeat first [eassumption | progress evaluate].
 Qed.
 Local Opaque structural_fork.

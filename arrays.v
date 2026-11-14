@@ -90,7 +90,7 @@ Lemma is_index_spec : forall n, is_index n = true <-> unary_index n.
 Proof.
   intro n; unfold unary_index; pose proof (index_check_eval n) as H; split.
   - intro E; rewrite E in H; exact H.
-  - intro Hrun; pose proof (eval_deterministic _ _ Hrun _ H) as He.
+  - intro Hrun; pose proof (eval_deterministic _ _ _ Hrun _ H) as He.
     destruct (is_index n); [reflexivity|discriminate].
 Qed.
 
@@ -159,13 +159,13 @@ Definition arrow_wait A a := 'wait2[payload_elim, A, a].
 Lemma arrow_wait_eval : forall A a F V, a @ F @r A ==> V -> arrow_wait A a @ F ==> V.
 Proof.
   intros A a F V H; pose proof (payload_eliminator_some _ _ _ _ H) as H1.
-  destruct (eval_appl_inv _ _ _ H1) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
+  destruct (eval_appl_inv _ _ _ _ H1) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
   apply wait2_eval; eapply eval_appl; eassumption.
 Qed.
 Lemma arrow_wait_inv : forall A a F V, arrow_wait A a @ F ==> V -> a @ F @r A ==> V.
 Proof.
   intros A a F V H; apply wait2_eval_inv in H.
-  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
   apply payload_eliminator_inv; eapply eval_appl; [apply wait_eval; exact Hw|exact Hv].
 Qed.
 Definition array_step A a E := ('onStem1 E) 'C arrow_wait A a.
@@ -189,8 +189,8 @@ Lemma array_elim_app : forall X a U V,
   array_elim @ X @r a @r U ==> V <-> array_core X a @ U ==> V.
 Proof.
   intros X a U V; split; intro H.
-  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hwu]].
-    pose proof (eval_deterministic _ _ Hw _ (array_elim_eval X a)); subst w; exact Hwu.
+  - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hwu]].
+    pose proof (applied_deterministic _ _ _ Hw _ (array_elim_eval X a)); subst w; exact Hwu.
   - eapply eval_appl; [apply array_elim_eval | exact H].
 Qed.
 Lemma array_unary_app : forall A a n U V,
@@ -205,10 +205,10 @@ Lemma array_eliminator_unary : forall A n a U V,
   array_eliminator A n @ a @r U ==> V <-> array_unary A a n @ U ==> V.
 Proof.
   intros A n a U V; unfold array_eliminator, array_unary; split; intro H.
-  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
+  - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
     apply wait2_eval; eapply eval_appl; eassumption.
   - apply wait2_eval_inv in H.
-    destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]].
+    destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]].
     eapply eval_appl; [apply wait_eval; exact Hw|exact Hv].
 Qed.
 
@@ -291,13 +291,9 @@ Proof. intros; apply path_eval. Qed.
 Local Opaque acc_left acc_right equal equal1 index_sum_prog array_elim.
 
 Local Ltac arr_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first [ eassumption | apply equal_eval
+  closed_eval_goal; first [ eassumption | apply equal_eval
             | apply acc_arg_eval | apply acc_pB_eval
-            | apply acc_left_eval | apply acc_right_eval ]
-  end.
+            | apply acc_left_eval | apply acc_right_eval ].
 Local Ltac arr_eval :=
   first [ arr_atom | evaluate_expr_core arr_eval arr_head | idtac ]
 with arr_head :=
@@ -424,8 +420,8 @@ Proof.
   remember (path_fn path_left (path_fn path_left C)) as Em eqn:HEm.
   remember (path_fn path_arg (path_fn path_arg Em)) as B eqn:HB.
   pose proof (array_splice_eval En Em B) as HS.
-  destruct (eval_appl_inv _ _ _ HS) as [f2 [H2 H2']].
-  destruct (eval_appl_inv _ _ _ H2) as [f1 [H1 H1']].
+  destruct (eval_appl_inv _ _ _ _ HS) as [f2 [H2 H2']].
+  destruct (eval_appl_inv _ _ _ _ H2) as [f1 [H1 H1']].
   pose proof (acc_left_eval (path_fn path_right C)) as A1; rewrite <- HEn in A1.
   pose proof (acc_left_eval (path_fn path_left C)) as A2; rewrite <- HEm in A2.
   pose proof (acc_arg_eval (path_fn path_arg Em)) as A3; rewrite <- HB in A3.
@@ -497,7 +493,7 @@ Proof.
   assert (H2 : append_right (Array A m 'C Array A n) = array_eliminator A n) by reflexivity.
   assert (H3 : append_elem (Array A m 'C Array A n) = A) by reflexivity.
   pose proof (array_splice_eval (array_eliminator A n) (array_eliminator A m) A) as HS.
-  pose proof (eval_deterministic _ _ HS _ (array_splice_canonical A n m)) as HSp.
+  pose proof (applied_deterministic _ _ _ HS _ (array_splice_canonical A n m)) as HSp.
   unfold array_abstraction, empty_fn, prepend_fn, append_fn in H.
   rewrite H1, H2, H3, HSp in H.
   rewrite (ceqb_false (Array A m 'C Array A n)) in H
@@ -513,7 +509,7 @@ Lemma array_abstractor_inv : forall C X, array_abstractor @ C ==> Sm X ->
   (exists A n, C = Array A n 'C swap A /\ X = array_eliminator A (Sm n)) \/
   (exists A n m, C = Array A m 'C Array A n /\ X = array_eliminator A (index_sum n m)).
 Proof.
-  intros C X H; pose proof (eval_deterministic _ _ H _ (array_abstractor_eval C)) as HX.
+  intros C X H; pose proof (eval_deterministic _ _ _ H _ (array_abstractor_eval C)) as HX.
   clear H; unfold array_abstraction in HX.
   remember (empty_fn C) as r1 eqn:E1; unfold empty_fn in E1.
   destruct (ceqb C ('wait['KI, path_fn path_arg C])) eqn:Hc1.
@@ -566,7 +562,7 @@ Qed.
 Lemma infer_array_application : forall AI xs A n f U,
   infer AI @ xs ==> Sm (Array A n) ->
   infer AI @ f ==> Sm (consumer_type A n U) ->
-  has_type AI (xs @ f) U.
+  has_type AI xs [f] U.
 Proof.
   intros; has_type_intro;
     [eassumption|
@@ -613,7 +609,7 @@ Lemma infer_append_carrier_application : forall AI xs ys A n m f U,
   infer AI @ xs ==> Sm (Array A n) ->
   infer AI @ ys ==> Sm (Array A m) ->
   infer AI @ f ==> Sm (consumer_type A (index_sum n m) U) ->
-  has_type AI (append_carrier xs ys @ f) U.
+  has_type AI (append_carrier xs ys) [f] U.
 Proof.
   intros; has_type_intro.
   - eapply infer_append_carrier; eassumption.
@@ -814,7 +810,7 @@ Proof.
     + apply empty_eval.
 Qed.
 Example infer_appended_leaves_application : 
-  has_type array_ontology (appended_leaves @ second_leaf) Lf.
+  has_type array_ontology appended_leaves [second_leaf] Lf.
 Proof.
   eapply infer_array_application; [apply infer_appended_leaves|].
   unfold second_leaf; eapply infer_lam.
@@ -862,7 +858,7 @@ Qed.
 Theorem infer_array_append_application : forall AI xs ys A n m,
   supports_arrays AI ->
   infer AI @ xs ==> Sm (Array A n) -> infer AI @ ys ==> Sm (Array A m) ->
-  has_type AI (array_append @ (xs '* ys)) (Array A (index_sum n m)).
+  has_type AI array_append [xs '* ys] (Array A (index_sum n m)).
 Proof.
   intros AI xs ys A n m HS HX HY; has_type_intro.
   - apply infer_array_append.
@@ -875,7 +871,7 @@ Example append_two_singletons :
     ==> appended_leaves.
 Proof. apply array_append_eval. Qed.
 Example infer_append_two_singletons :
-  has_type array_ontology (array_append @ (prepend Lf (empty Lf) '* prepend Lf (empty Lf))) (Array Lf (Sm (Sm Lf))).
+  has_type array_ontology array_append [prepend Lf (empty Lf) '* prepend Lf (empty Lf)] (Array Lf (Sm (Sm Lf))).
 Proof.
   eapply infer_array_append_application with (n := Sm Lf) (m := Sm Lf);
     repeat first [apply array_ontology_support|apply infer_prepend|
@@ -887,7 +883,7 @@ Proof.
   eapply eval_appl; [apply append_two_singletons|apply appended_leaves_eval].
 Qed.
 Example infer_append_consumer : 
-  has_type array_ontology (array_append @ (prepend Lf (empty Lf) '* prepend Lf (empty Lf)) @r second_leaf) Lf.
+  has_type array_ontology array_append [prepend Lf (empty Lf) '* prepend Lf (empty Lf); second_leaf] Lf.
 Proof.
   has_type_intro.
   - apply infer_append_two_singletons.
@@ -953,14 +949,13 @@ Proof.
   apply plain_empty_ontology_sound_for.
 Qed.
 
-Lemma array_ontology_EPT : forall e v T,
-  e ==> v -> has_type array_ontology e T ->
+Lemma array_ontology_EPT : forall f xs v T,
+  apps f xs ==> v -> has_type array_ontology f xs T ->
   infer array_ontology @ v ==> Sm T.
 Proof.
-  intros e v T He Ht.
   assert (Hs : plain_intro_sound array_ontology).
   { intros C N E U V HI HE.
     exact (array_ontology_plain_sound_for array_decl
       array_ontology_supports_booleans array_ontology_supports_list C N E U V HI HE). }
-  exact (plain_evaluation_preserves_typing array_ontology e v Hs He T Ht).
+  apply typing_in_turn; intros g u w; exact (plain_evaluation_preserves_typing array_ontology g u w Hs).
 Qed.

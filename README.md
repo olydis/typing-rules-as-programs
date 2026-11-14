@@ -42,21 +42,26 @@ are Lemmas, cited by name in the paper.
 
 The paper reads a tree as an expression: `Sm v` marks the value `v`, a fork
 applies one expression to another, and `e :: U` types an expression by the
-program `infer_expression`. Here evaluation applies values to values only.
-An application `f @ u` applies the value `f` to the value `u`, and
-`d @r u` applies the value of the application `d` to `u`; applications
-are not trees, and every argument is a value (`tree.v`). The type of an
-application, `has_type AI d T`, is type application of the types of the
-values it applies (`typing.v`). The paper's theorems about expressions
-are stated about applications: Theorems 3 to 5 say that evaluation of an
-application preserves its type, and the tools of "Towards Typed Tooling"
-act on the values an application applies (its operator for optimisation,
-all of them for patching).
+program `infer_expression`. Here there are only values, and application
+is a partial function on them: `f @ u ==> v` says that applying the value
+`f` to the value `u` gives the value `v` (`tree.v`). It is a relation
+because an application may diverge, and it is deterministic (Theorem 1).
+Applying to several arguments in turn is notation for the intermediate
+results: `f @ x @r y ==> v` is `exists w, f @ x ==> w /\ w @ y ==> v`, and
+`apps f xs ==> v` applies `f` to the list `xs`.
+
+The type of `f` applied to arguments `xs`, `has_type AI f xs T`, is type
+application of the types of `f` and of the arguments, in turn
+(`typing.v`). The paper's statements about an expression are stated about
+a value and the arguments it is applied to: Theorems 3 and 5 say that if
+`apps f xs ==> v` and `has_type AI f xs T` then `v : T`, and the tools of
+"Towards Typed Tooling" act on that value and its arguments (on the value
+applied, for optimisation; on all of them, for patching).
 
 Snapshots of evaluation are computations held as data, so `steps.v` keeps
-the paper's encoding of computations as trees: `run` gives an encoded
-computation its meaning in terms of applications, and `infer_expression`
-types snapshots.
+the paper's encoding of computations as trees: `enc f xs` encodes `f`
+applied to `xs`, `run` gives an encoded computation its meaning by
+application, and `infer_expression` types snapshots.
 
 ## Files
 

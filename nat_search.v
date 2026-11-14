@@ -26,7 +26,7 @@ Lemma nat_search_eval : forall p n w v,
   minimisation @ p @r seek_at n ==> w -> w @ 'I ==> v ->
   nat_search @ p @r n ==> v.
 Proof.
-  intros p n w v H Hw; destruct (eval_appl_inv _ _ _ H) as [m [Hm Hv]].
+  intros p n w v H Hw; destruct (eval_appl_inv _ _ _ _ H) as [m [Hm Hv]].
   pose proof (seek_wrap_eval n).
   unfold nat_search; d_eval.
 Qed.
@@ -100,13 +100,13 @@ Proof. intros; unfold nat_search; pose proof (minimisation_eval p); d_eval. Qed.
 Lemma nat_search_inv : forall p n v, nat_search @ p @r n ==> v ->
   exists w, minimisation @ p @r seek_at n ==> w /\ w @ 'I ==> v.
 Proof.
-  intros p n v H; destruct (eval_appl_inv _ _ _ H) as [a [Ha Hv]]; clear H.
-  pose proof (eval_deterministic _ _ Ha _ (nat_search_at_eval p)) as ->; clear Ha.
+  intros p n v H; destruct (eval_appl_inv _ _ _ _ H) as [a [Ha Hv]]; clear H.
+  pose proof (eval_deterministic _ _ _ Ha _ (nat_search_at_eval p)) as ->; clear Ha.
   destruct (eval_s_inv _ _ _ _ Hv) as [g [i [Hg [Hi Hgi]]]]; clear Hv.
   assert (HKI : 'KI @ n ==> 'I) by evaluate.
-  pose proof (eval_deterministic _ _ Hi _ HKI) as ->; clear Hi HKI.
+  pose proof (eval_deterministic _ _ _ Hi _ HKI) as ->; clear Hi HKI.
   destruct (eval_c_inv _ _ _ _ Hg) as [s [Hs Hms]]; clear Hg.
-  pose proof (eval_deterministic _ _ Hs _ (seek_wrap_eval n)) as ->; clear Hs.
+  pose proof (eval_deterministic _ _ _ Hs _ (seek_wrap_eval n)) as ->; clear Hs.
   exists g; split; [|exact Hgi].
   eapply eval_appl; [apply minimisation_eval|exact Hms].
 Qed.
@@ -132,7 +132,7 @@ Theorem nat_search_is_odd : forall (AI : Decl),
   supports_seek AI -> supports_updates AI -> supports_is_named AI ->
   supports_booleans AI -> supports_number AI ->
   nat_search @ is_odd @r zero ==> one /\
-  has_type AI (nat_search @ is_odd @r zero) ('Nat).
+  has_type AI nat_search [is_odd; zero] ('Nat).
 Proof.
   intros AI HK HU HT HB HN; split; [exact nat_search_is_odd_eval|].
   pose proof (nat_search_polymorphic AI Odd HK HU HT HB HN (type_app_Odd AI)) as [Hs [HP HNat]].

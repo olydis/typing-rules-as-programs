@@ -33,14 +33,14 @@ Lemma I_omega : 'I @ omega ==> omega.
 Proof. unfold omega; evaluate. Qed.
 
 Lemma omega_omega_evaln_smaller : forall n v,
-  evaln n (omega @ omega) v -> exists m, m < n /\ evaln m (omega @ omega) v.
+  evaln n omega omega v -> exists m, m < n /\ evaln m omega omega v.
 Proof.
   intros n v H; unfold omega at 1 in H.
   inv_out H.
   repeat match goal with
-  | H : evaln _ ('I @ omega) ?x |- _ =>
+  | H : evaln _ 'I omega ?x |- _ =>
       apply evaln_eval in H;
-      pose proof (eval_deterministic _ _ H _ I_omega); subst x; clear H
+      pose proof (eval_deterministic _ _ _ H _ I_omega); subst x; clear H
   end.
   eexists; split; [|eassumption]; lia.
 Qed.
@@ -48,7 +48,7 @@ Qed.
 Lemma omega_omega_no_value : forall v, ~ (omega @ omega ==> v).
 Proof.
   intros v H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evaln _ _ _ H) as [n Hn]; clear H.
   revert v Hn.
   induction n as [n IH] using lt_wf_ind; intros v Hn.
   destruct (omega_omega_evaln_smaller _ _ Hn) as [m [Hm Hm']].
@@ -63,36 +63,37 @@ Local Opaque abstract_case default_body type_app_stem type_app_S
 
 (** The clause for [S2[G,F]] runs [type_app_S], at no greater height. *)
 Lemma default_S_evaln : forall (AI : Decl) rec G F w m,
-  evaln m (default_body AI @ rec @r ('S2[G,F])) w ->
-  evaln m (type_app_S @ rec @r G @r F) w.
+  evalsn m (default_body AI) [rec; 'S2[G,F]] w ->
+  evalsn m type_app_S [rec; G; F] w.
 Proof.
   intros AI rec G F w m Hw.
-  pose proof (default_S_head_inv _ _ _ _ _ (evaln_eval _ _ _ Hw)) as HS.
+  pose proof (default_S_head_inv _ _ _ _ _ (evalsn_eval _ _ _ _ Hw)) as HS.
   Local Transparent default_body.
   unfold default_body in Hw; invert_evaln.
   Local Opaque default_body.
   all: try (exfalso; match goal with
-  | H : evaln _ (get_tagged @ Sm _) (Sm _) |- _ =>
+  | H : evaln _ get_tagged (Sm _) (Sm _) |- _ =>
     apply evaln_eval in H; destruct (get_tagged_success_inv _ _ H) as [? [? [HT _]]];
     discriminate HT end).
   all: match goal with
   | HS0 : type_app_S @ ?r @r ?g @r ?f ==> ?w0,
-    H1 : evaln _ (type_app_S @ ?r) ?t, H2 : evaln _ (?t @ ?g) ?t1,
-    H3 : evaln _ (?t1 @ ?f) ?v |- _ =>
+    H1 : evaln _ type_app_S ?r ?t, H2 : evaln _ ?t ?g ?t1,
+    H3 : evaln _ ?t1 ?f ?v |- _ =>
     let E := fresh "E" in
-    assert (E : w0 = v) by (eapply eval_deterministic; [exact HS0|
-      eapply eval_appl; [eapply eval_appl; [exact (evaln_eval _ _ _ H1)|
-        exact (evaln_eval _ _ _ H2)]|exact (evaln_eval _ _ _ H3)]]);
+    assert (E : w0 = v) by (eapply applied_deterministic; [exact HS0|
+      eapply eval_appl; [eapply eval_appl; [exact (evaln_eval _ _ _ _ H1)|
+        exact (evaln_eval _ _ _ _ H2)]|exact (evaln_eval _ _ _ _ H3)]]);
     try rewrite E; evaln_close
   end.
 Qed.
 
 (** Height-indexed inversion of the S clause for an arbitrary result [R],
-    given that both component applications succeed. *)
+    given that both component applications succeed: the result comes
+    from [rec # VG # VF] one height lower. *)
 Lemma default_S_evaln_any : forall (AI : Decl) rec G F U w m VG VF R,
-  evaln m (default_body AI @ rec @r ('S2[G,F])) w -> evaln m (w @ U) R ->
+  evalsn m (default_body AI) [rec; 'S2[G,F]] w -> evaln m w U R ->
   rec @ G @r U ==> Sm VG -> rec @ F @r U ==> Sm VF ->
-  evaln m (rec @ VG @r VF) R.
+  evalsn (pred m) rec [VG; VF] R.
 Proof.
   intros AI rec G F U w m VG VF R Hw H HG HF.
   apply default_S_evaln in Hw as HT; clear Hw.
@@ -101,11 +102,10 @@ Proof.
   invert_evaln.
   all: repeat match goal with
     | Hc : ?r @ ?g @r ?u ==> Sm ?vg,
-      H1 : evaln _ (?r @ ?g) ?x, H2 : evaln _ (?x @ ?u) ?a |- _ =>
+      H1 : evaln _ ?r ?g ?x, H2 : evaln _ ?x ?u ?a |- _ =>
         let E := fresh "E" in
-        assert (E : a = Sm vg) by (eapply eval_deterministic;
-          [eapply eval_appl; [exact (evaln_eval _ _ _ H1)|exact (evaln_eval _ _ _ H2)]
-          |exact Hc]);
+        assert (E : a = Sm vg) by (symmetry; apply (applied_deterministic _ _ _ Hc);
+          exists x; split; [exact (evaln_eval _ _ _ _ H1)|exact (evaln_eval _ _ _ _ H2)]);
         clear H2; first [discriminate E | injection E; intros; subst]
     end.
   all: evaln_close.
@@ -118,22 +118,22 @@ Proof. intros E N H; unfold omega in H; discriminate H. Qed.
 (** Type application of [omega] to [omega] unfolds, through the clause for
     [S2[G,F]] with [I # omega ==> Sm omega], to itself at smaller height. *)
 Lemma type_app_omega_evaln_smaller : forall (AI : Decl) n R,
-  evaln n (type_app AI @ omega @r omega) R ->
-  exists m, m < n /\ evaln m (type_app AI @ omega @r omega) R.
+  evalsn n (type_app AI) [omega; omega] R ->
+  exists m, m < n /\ evalsn m (type_app AI) [omega; omega] R.
 Proof.
   intros AI n R H.
   destruct (app_evaln_head AI n omega omega R omega_untagged H)
     as [m [w [Hm [Hw HR]]]].
-  exists m; split; [exact Hm|].
-  exact (default_S_evaln_any AI (type_app AI) 'I 'I omega w m omega omega R
-      Hw HR (app_I AI omega) (app_I AI omega)).
+  exists (pred n); split; [lia|].
+  exact (default_S_evaln_any AI (type_app AI) 'I 'I omega w n omega omega R
+      (evalsn_mono _ _ _ _ Hw n ltac:(lia)) HR (app_I AI omega) (app_I AI omega)).
 Qed.
 
 Lemma type_app_omega_no_value : forall (AI : Decl) R,
   ~ (type_app AI @ omega @r omega ==> R).
 Proof.
   intros AI R H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evalsn _ [omega; omega] _ H) as [n Hn]; clear H.
   revert R Hn.
   induction n as [n IH] using lt_wf_ind; intros R Hn.
   destruct (type_app_omega_evaln_smaller _ _ _ Hn) as [m [Hm Hm']].
@@ -152,8 +152,8 @@ Lemma infer_expression_omega_omega_no_value : forall (AI : Decl) F U R,
   ~ (type_app AI @ F @r U ==> R).
 Proof.
   intros AI F U R HF HU.
-  pose proof (eval_deterministic _ _ HF _ (omega_self_typed AI)) as E; inv_out E.
-  pose proof (eval_deterministic _ _ HU _ (omega_self_typed AI)) as E; inv_out E.
+  pose proof (eval_deterministic _ _ _ HF _ (omega_self_typed AI)) as E; inv_out E.
+  pose proof (eval_deterministic _ _ _ HU _ (omega_self_typed AI)) as E; inv_out E.
   exact (type_app_omega_no_value AI R).
 Qed.
 
@@ -178,7 +178,7 @@ Proof.
     [ match goal with
       | HH : get_tagged @ ('tagged[C,fun_nm]) ==> ?v |- _ =>
           is_var v;
-          pose proof (eval_deterministic _ _ HH _ (get_tagged_some C fun_nm)) as HE;
+          pose proof (eval_deterministic _ _ _ HH _ (get_tagged_some C fun_nm)) as HE;
           subst v; clear HH
       end
     | progress invert_eval1 ].
@@ -222,14 +222,14 @@ Lemma function_abstractor_decorate_any_inv : forall F U type_app0 r,
   exists V, type_app0 @ F @r U ==> V.
 Proof.
   intros F U type_app0 r H.
-  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hr]]; clear H.
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hr]]; clear H.
   unfold function_abstractor_core in Hw.
   destruct (check_function_direct_decorate F U) as [c Hc].
   destruct (extend_inv _ _ _ _ Hw)
     as [[c' [Hc' ->]]|[[Hnone _]|[l [q [Hfork _]]]]].
   - exact (check_function_direct_any_inv _ _ _ _ _ Hc' Hr).
-  - pose proof (eval_deterministic _ _ Hc _ Hnone); discriminate.
-  - pose proof (eval_deterministic _ _ Hc _ Hfork); discriminate.
+  - pose proof (eval_deterministic _ _ _ Hc _ Hnone); discriminate.
+  - pose proof (eval_deterministic _ _ _ Hc _ Hfork); discriminate.
 Qed.
 Local Opaque function_abstractor_core.
 
@@ -250,10 +250,10 @@ Lemma infer_lam_omega_needs_type_app : forall (AI : Decl) R,
 Proof.
   intros AI R H; unfold lam in H.
   destruct (infer_fork_gen_inv AI _ _ _ H) as [a [b [Ha [Hb HR]]]]; clear H.
-  pose proof (eval_deterministic _ _ Ha _
+  pose proof (eval_deterministic _ _ _ Ha _
     (infer_tag_free AI (Sm ('K1 ('decorate[omega,omega]))) ltac:(tag_free_tac)));
     subst a.
-  pose proof (eval_deterministic _ _ Hb _ (infer_label_fun_nm AI)); subst b.
+  pose proof (eval_deterministic _ _ _ Hb _ (infer_label_fun_nm AI)); subst b.
   apply (proj1 (infer_fork_results_spec AI _ _ R)) in HR.
   apply app_stem_inv in HR.
   destruct (type_app_stem_fun_any_inv _ _ _ _ HR) as [r' Hr'].
@@ -282,8 +282,8 @@ Definition truth_teller : Combination := Z 'I.
 (** ** Z I @ x has no value *)
 
 Lemma truth_teller_evaln_smaller : forall n x v,
-  evaln n (truth_teller @ x) v ->
-  exists m, m < n /\ evaln m (truth_teller @ x) v.
+  evaln n truth_teller x v ->
+  exists m, m < n /\ evaln m truth_teller x v.
 Proof.
   intros n x v H; unfold truth_teller in H.
   destruct (Z_evaln_unfold_inv _ _ _ _ H) as [m [w [Hm [Hw H2]]]].
@@ -295,7 +295,7 @@ Qed.
 Lemma truth_teller_no_value : forall x v, ~ (truth_teller @ x ==> v).
 Proof.
   intros x v H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evaln _ _ _ H) as [n Hn]; clear H.
   revert v Hn.
   induction n as [n IH] using lt_wf_ind; intros v Hn.
   destruct (truth_teller_evaln_smaller _ _ _ Hn) as [m [Hm Hm']].
@@ -344,24 +344,24 @@ Proof. intros E N H; unfold truth_teller, Z in H; discriminate H. Qed.
 (** Type application of [Z I] unfolds, through the clause for [S2[G,F]],
     to itself at smaller height, just as its evaluation does. *)
 Lemma type_app_truth_teller_evaln_smaller : forall (AI : Decl) n U R,
-  evaln n (type_app AI @ truth_teller @r U) R ->
-  exists m, m < n /\ evaln m (type_app AI @ truth_teller @r U) R.
+  evalsn n (type_app AI) [truth_teller; U] R ->
+  exists m, m < n /\ evalsn m (type_app AI) [truth_teller; U] R.
 Proof.
   intros AI n U R H.
   destruct (app_evaln_head AI n truth_teller U R truth_teller_untagged H)
     as [m [w [Hm [Hw HR]]]].
-  exists m; split; [exact Hm|].
+  exists (pred n); split; [lia|].
   unfold truth_teller, Z in Hw.
   exact (default_S_evaln_any AI (type_app AI)
-      ('S2['K1 dup_z,'K1 ('I 'C bz)]) 'I U w m truth_teller U R
-      Hw HR (app_truth_teller_head AI U) (app_I AI U)).
+      ('S2['K1 dup_z,'K1 ('I 'C bz)]) 'I U w n truth_teller U R
+      (evalsn_mono _ _ _ _ Hw n ltac:(lia)) HR (app_truth_teller_head AI U) (app_I AI U)).
 Qed.
 
 Lemma type_app_truth_teller_no_value : forall (AI : Decl) U R,
   ~ (type_app AI @ truth_teller @r U ==> R).
 Proof.
   intros AI U R H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evalsn _ [truth_teller; U] _ H) as [n Hn]; clear H.
   revert R Hn.
   induction n as [n IH] using lt_wf_ind; intros R Hn.
   destruct (type_app_truth_teller_evaln_smaller _ _ _ _ Hn) as [m [Hm Hm']].
@@ -379,7 +379,7 @@ Lemma infer_expression_truth_teller_no_value : forall (AI : Decl) x F X R,
   ~ (type_app AI @ F @r X ==> R).
 Proof.
   intros AI x F X R HF _.
-  pose proof (eval_deterministic _ _ HF _ (truth_teller_self_typed AI)) as E; inv_out E.
+  pose proof (eval_deterministic _ _ _ HF _ (truth_teller_self_typed AI)) as E; inv_out E.
   exact (type_app_truth_teller_no_value AI X R).
 Qed.
 
@@ -390,9 +390,9 @@ Qed.
     component [cdither # U] runs again at smaller height. *)
 
 Lemma default_S_evaln_right : forall (AI : Decl) rec G F U w m VG R,
-  evaln m (default_body AI @ rec @r ('S2[G,F])) w -> evaln m (w @ U) R ->
+  evalsn m (default_body AI) [rec; 'S2[G,F]] w -> evaln m w U R ->
   rec @ G @r U ==> Sm VG ->
-  exists k R', k <= m /\ evaln k (rec @ F @r U) R'.
+  exists k R', k < m /\ evalsn k rec [F; U] R'.
 Proof.
   intros AI rec G F U w m VG R Hw H HG.
   apply default_S_evaln in Hw as HT; clear Hw.
@@ -401,20 +401,18 @@ Proof.
   invert_evaln.
   all: repeat match goal with
     | Hc : ?r @ ?g @r ?u ==> Sm ?vg,
-      H1 : evaln _ (?r @ ?g) ?x, H2 : evaln _ (?x @ ?u) ?a |- _ =>
+      H1 : evaln _ ?r ?g ?x, H2 : evaln _ ?x ?u ?a |- _ =>
         let E := fresh "E" in
-        assert (E : a = Sm vg) by (eapply eval_deterministic;
-          [eapply eval_appl; [exact (evaln_eval _ _ _ H1)|exact (evaln_eval _ _ _ H2)]
-          |exact Hc]);
+        assert (E : a = Sm vg) by (symmetry; apply (applied_deterministic _ _ _ Hc);
+          exists x; split; [exact (evaln_eval _ _ _ _ H1)|exact (evaln_eval _ _ _ _ H2)]);
         clear H2; first [discriminate E | injection E; intros; subst]
     end.
   all: match goal with
-    | |- exists _ _, _ /\ evaln _ (?d @r ?u) _ =>
+    | |- exists _ _, _ /\ evalsn _ ?d [?f; ?u] _ =>
       match goal with
-      | H1 : evaln ?a d ?x, H2 : evaln ?b (?x @ u) ?r |- _ =>
-        exists (S (Nat.max a b)), r; split;
-        [ lia | apply (evaln_appl (Nat.max a b) _ _ x r);
-          [ apply (evaln_lt a _ _ _ H1); lia | apply (evaln_lt b _ _ _ H2); lia ] ]
+      | H1 : evaln ?a d f ?x, H2 : evaln ?b ?x u ?r |- _ =>
+        exists (Nat.max a b), r; split; [lia|];
+        exists x; split; [apply (evaln_lt a _ _ _ _ H1); lia|apply (evaln_lt b _ _ _ _ H2); lia]
       end
     end.
   Local Opaque type_app_S.
@@ -445,25 +443,25 @@ Proof. intros E N H; unfold cdither, Z in H; discriminate H. Qed.
 Lemma cneg_compose_untagged : forall E N, (cneg 'C cdither) <> 'tagged[E,N].
 Proof. intros E N H; cbv [cneg] in H; inversion H. Qed.
 Lemma type_app_cdither_evaln_smaller : forall (AI : Decl) n U R,
-  evaln n (type_app AI @ cdither @r U) R ->
-  exists m R', m < n /\ evaln m (type_app AI @ cdither @r U) R'.
+  evalsn n (type_app AI) [cdither; U] R ->
+  exists m R', m < n /\ evalsn m (type_app AI) [cdither; U] R'.
 Proof.
   intros AI n U R H.
   destruct (app_evaln_head AI n cdither U R cdither_untagged H) as [m [w [Hm [Hw HR]]]].
   unfold cdither, Z in Hw.
   pose proof (default_S_evaln_any AI (type_app AI)
-      ('S2['K1 dup_z,'K1 (cdither_body 'C bz)]) 'I U w m (cneg 'C cdither) U R
-      Hw HR (app_cdither_head AI U) (app_I AI U)) as H1.
-  destruct (app_evaln_head AI m (cneg 'C cdither) U R cneg_compose_untagged H1) as [m2 [w2 [Hm2 [Hw2 HR2]]]].
-  destruct (default_S_evaln_right AI (type_app AI) ('K1 cneg) cdither U w2 m2 cneg R Hw2 HR2
-      ltac:(apply app_K)) as [k [R' [Hk H3]]].
+      ('S2['K1 dup_z,'K1 (cdither_body 'C bz)]) 'I U w n (cneg 'C cdither) U R
+      (evalsn_mono _ _ _ _ Hw n ltac:(lia)) HR (app_cdither_head AI U) (app_I AI U)) as H1.
+  destruct (app_evaln_head AI (pred n) (cneg 'C cdither) U R cneg_compose_untagged H1) as [m2 [w2 [Hm2 [Hw2 HR2]]]].
+  destruct (default_S_evaln_right AI (type_app AI) ('K1 cneg) cdither U w2 (pred n) cneg R
+      (evalsn_mono _ _ _ _ Hw2 (pred n) ltac:(lia)) HR2 ltac:(apply app_K)) as [k [R' [Hk H3]]].
   exists k, R'; split; [lia|exact H3].
 Qed.
 Lemma type_app_cdither_no_value : forall (AI : Decl) U R,
   ~ (type_app AI @ cdither @r U ==> R).
 Proof.
   intros AI U R H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evalsn _ [cdither; U] _ H) as [n Hn]; clear H.
   revert R Hn.
   induction n as [n IH] using lt_wf_ind; intros R Hn.
   destruct (type_app_cdither_evaln_smaller _ _ _ _ Hn) as [m [R' [Hm Hm']]].
@@ -480,7 +478,7 @@ Theorem infer_expression_cdither_no_value : forall (AI : Decl) x C X R,
   ~ (type_app AI @ C @r X ==> R).
 Proof.
   intros AI x C X R HC _.
-  pose proof (eval_deterministic _ _ HC _ (cdither_self_typed AI)) as E; inv_out E.
+  pose proof (eval_deterministic _ _ _ HC _ (cdither_self_typed AI)) as E; inv_out E.
   exact (type_app_cdither_no_value AI X R).
 Qed.
 
@@ -502,12 +500,12 @@ Proof. unfold zdither_body; cbn; d_eval. Qed.
 Lemma zdither_no_value : forall x v, ~ (zdither @ x ==> v).
 Proof.
   intros x v H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evaln _ _ _ H) as [n Hn]; clear H.
   revert v Hn.
   induction n as [n IH] using lt_wf_ind; intros v Hn.
   unfold zdither at 1 in Hn.
   destruct (Z_evaln_unfold_inv _ _ _ _ Hn) as [m2 [w [Hm2 [Hw H2]]]].
-  pose proof (eval_deterministic _ _ Hw _ neg_step) as Heq; subst w.
+  pose proof (eval_deterministic _ _ _ Hw _ neg_step) as Heq; subst w.
   destruct (compose_evaln_inv _ _ _ _ _ H2) as [m3 [w [Hm3 H3]]].
   exact (IH m3 ltac:(lia) w H3).
 Qed.
@@ -527,25 +525,25 @@ Proof. intros E N H; unfold zdither_type, Z in H; discriminate H. Qed.
 Lemma Neg_compose_untagged : forall E N, (Neg 'C zdither_type) <> 'tagged[E,N].
 Proof. intros E N H; cbv [Neg] in H; inversion H. Qed.
 Lemma type_app_zdither_evaln_smaller : forall (AI : Decl) n U R,
-  evaln n (type_app AI @ zdither_type @r U) R ->
-  exists m R', m < n /\ evaln m (type_app AI @ zdither_type @r U) R'.
+  evalsn n (type_app AI) [zdither_type; U] R ->
+  exists m R', m < n /\ evalsn m (type_app AI) [zdither_type; U] R'.
 Proof.
   intros AI n U R H.
   destruct (app_evaln_head AI n zdither_type U R zdither_type_untagged H) as [m [w [Hm [Hw HR]]]].
   unfold zdither_type, Z in Hw.
   pose proof (default_S_evaln_any AI (type_app AI)
-      ('S2['K1 dup_z,'K1 (zdither_type_body 'C bz)]) 'I U w m (Neg 'C zdither_type) U R
-      Hw HR (app_zdither_type_head AI U) (app_I AI U)) as H1.
-  destruct (app_evaln_head AI m (Neg 'C zdither_type) U R Neg_compose_untagged H1) as [m2 [w2 [Hm2 [Hw2 HR2]]]].
-  destruct (default_S_evaln_right AI (type_app AI) ('K1 Neg) zdither_type U w2 m2 Neg R Hw2 HR2
-      ltac:(apply app_K)) as [k [R' [Hk H3]]].
+      ('S2['K1 dup_z,'K1 (zdither_type_body 'C bz)]) 'I U w n (Neg 'C zdither_type) U R
+      (evalsn_mono _ _ _ _ Hw n ltac:(lia)) HR (app_zdither_type_head AI U) (app_I AI U)) as H1.
+  destruct (app_evaln_head AI (pred n) (Neg 'C zdither_type) U R Neg_compose_untagged H1) as [m2 [w2 [Hm2 [Hw2 HR2]]]].
+  destruct (default_S_evaln_right AI (type_app AI) ('K1 Neg) zdither_type U w2 (pred n) Neg R
+      (evalsn_mono _ _ _ _ Hw2 (pred n) ltac:(lia)) HR2 ltac:(apply app_K)) as [k [R' [Hk H3]]].
   exists k, R'; split; [lia|exact H3].
 Qed.
 Theorem type_app_zdither_no_value : forall (AI : Decl) U R,
   ~ (type_app AI @ zdither_type @r U ==> R).
 Proof.
   intros AI U R H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evalsn _ [zdither_type; U] _ H) as [n Hn]; clear H.
   revert R Hn.
   induction n as [n IH] using lt_wf_ind; intros R Hn.
   destruct (type_app_zdither_evaln_smaller _ _ _ _ Hn) as [m [R' [Hm Hm']]].
@@ -570,5 +568,5 @@ From TreeTyping Require Import paper_ontology.
     at an abstract type. *)
 Lemma type_app_infer_Bool :
   type_app paper_ontology @ infer paper_ontology @r 'Bool ==> Lf.
-Proof. apply (eval_bounded_sound 300000); vm_compute; reflexivity. Qed.
+Proof. compute_eval 300000. Qed.
 

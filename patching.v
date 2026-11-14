@@ -540,7 +540,7 @@ Definition employee_list :=
   'tagged[list_eliminator (wrap_type employee_fields employee_nm), list_nm].
 
 Lemma pending_query_typed :
-  has_type paper_ontology (paid_over_57 @ department_example) employee_list.
+  has_type paper_ontology paid_over_57 [department_example] employee_list.
 Proof.
   eapply has_type_ap;
     [exact all_paid_over_typed | exact all_department_typed | apply query_app_type].
@@ -549,8 +549,8 @@ Qed.
 (** The update [salary_update] applied to either part of the pending query
     keeps the type of that part. *)
 Theorem salary_update_pending_query_typed :
-  has_type paper_ontology (salary_update @ paid_over_57) ('Query['List['Employee]]) /\
-  has_type paper_ontology (salary_update @ department_2025) ('Department).
+  has_type paper_ontology salary_update [paid_over_57] ('Query['List['Employee]]) /\
+  has_type paper_ontology salary_update [department_2025] ('Department).
 Proof.
   split; (eapply has_type_ap; [exact all_ghost_salary_update_typed| |apply type_app_Update]).
   - exact all_paid_over_typed.
@@ -565,11 +565,11 @@ Unset Default Proof Using.
 (**********************************************************************)
 
 (** An update can patch an application before it is evaluated, by
-    patching its operator and its arguments.  This file shows that such a
-    patch preserves the type of the application, and that in the salary
-    example patching a pending query gives the same result as patching the
-    query's result.  The type of an application is computed from the types
-    of the values it applies, which updates preserve. *)
+    patching the value applied and its arguments.  This file shows that
+    such a patch preserves the type of the application, and that in the
+    salary example patching a pending query gives the same result as
+    patching the query's result.  The type of an application is computed
+    from the types of the values it applies, which updates preserve. *)
 
 From Stdlib Require Import String.
 From TreeTyping Require Import tree typing soundness booleans.
@@ -577,50 +577,51 @@ From TreeTyping Require Import functions queries booleans updates paper_ontology
 
 Set Default Proof Using "Type".
 
-(** [patched u d d']: [d'] applies the patches by [u] of the values that
-    [d] applies. *)
-Inductive patched (u : Combination) : Application -> Application -> Prop :=
-| patched_ap : forall f x f' x',
-    u @ f ==> f' -> u @ x ==> x' -> patched u (f @ x) (f' @ x')
-| patched_apr : forall d x d' x',
-    patched u d d' -> u @ x ==> x' -> patched u (d @r x) (d' @r x').
+(** [patched u f xs f' xs']: [f'] and [xs'] are the patches by [u] of the
+    value [f] and of the arguments [xs] it is applied to. *)
+Definition patched (u f : Combination) (xs : list Combination)
+    (f' : Combination) (xs' : list Combination) : Prop :=
+  u @ f ==> f' /\ List.Forall2 (fun x x' => u @ x ==> x') xs xs'.
 
 (** * Updates preserve the typing of applications *)
 
-Theorem update_preserves_expression_typing : forall (AI : Decl) u e e' T,
+Theorem update_preserves_expression_typing : forall (AI : Decl) u f xs f' xs' T,
   ontology_sound AI -> infer AI @ u ==> Sm ('Update) ->
-  has_type AI e T -> patched u e e' -> has_type AI e' T.
+  has_type AI f xs T -> patched u f xs f' xs' -> has_type AI f' xs' T.
 Proof.
-  intros AI u e e' T Hsound Hu He Hp; revert T He.
-  induction Hp; intros T He.
-  - destruct (has_type_ap_inv _ _ _ _ He) as [F [X [Hf [Hx HA]]]].
-    eapply has_type_ap; [| |exact HA]; eapply abstract_update_preserves_typing; eassumption.
-  - destruct (has_type_apr_inv _ _ _ _ He) as [D [X [Hd [Hx HA]]]].
-    eapply has_type_apr; [exact (IHHp D Hd)| |exact HA].
+  intros AI u f xs f' xs' T Hsound Hu He [Hf Hp]; revert xs' T He Hp.
+  induction xs as [|x xs IH] using List.rev_ind; intros xs' T He Hp.
+  - inversion Hp; subst.
+    exact (abstract_update_preserves_typing AI u f T f' Hsound Hu He Hf).
+  - apply List.Forall2_app_inv_l in Hp as [l1 [l2 [Hp1 [Hp2 ->]]]].
+    inversion Hp2 as [|x0 x' l0 l0' Hx Hnil]; subst; inversion Hnil; subst.
+    destruct (has_type_apr_inv _ _ _ _ _ He) as [D [X [Hd [Hx' HA]]]].
+    eapply has_type_apr; [exact (IH _ _ Hd Hp1)| |exact HA].
     eapply abstract_update_preserves_typing; eassumption.
 Qed.
 
 (** * Patching with the ghost-aware salary update
 
-    [salary_update] patches the pending query [q57 @ d2025] into
-    [q58 @ d2026], where the department's ghost employee stays on the
+    [salary_update] patches the query [q57] applied to [d2025] into [q58]
+    applied to [d2026], where the department's ghost employee stays on the
     minimum wage. Patching then running agrees with running then patching:
     r = [E(1,58),E(3,57)] and r+ = [E(1,59),E(3,58)]. *)
 Lemma ghost_pending_query_updated :
-  patched salary_update (paid_over_57 @ department_2025)
-    (paid_over_58 @ department_2026).
+  patched salary_update paid_over_57 [department_2025]
+    paid_over_58 [department_2026].
 Proof.
-  apply patched_ap; [exact salary_update_paid_over_57|exact salary_update_department_2025].
+  split; [exact salary_update_paid_over_57|].
+  constructor; [exact salary_update_department_2025|constructor].
 Qed.
 
 Theorem patch_commutes_with_evaluation :
-  (patched salary_update (paid_over_57 @ department_2025)
-     (paid_over_58 @ department_2026) /\
+  (patched salary_update paid_over_57 [department_2025]
+     paid_over_58 [department_2026] /\
    paid_over_58 @ department_2026 ==> paid_58_in_2026) /\
   (paid_over_57 @ department_2025 ==> paid_57_in_2025 /\
    salary_update @ paid_57_in_2025 ==> paid_58_in_2026).
 Proof.
-  repeat split.
+  split; split.
   - exact ghost_pending_query_updated.
   - exact table_58_2026.
   - exact table_57_2025.
@@ -628,7 +629,7 @@ Proof.
 Qed.
 
 Lemma patched_query_typed :
-  has_type paper_ontology (paid_over_58 @ department_2026) employee_list.
+  has_type paper_ontology paid_over_58 [department_2026] employee_list.
 Proof.
   eapply update_preserves_expression_typing.
   - exact paper_ontology_sound.

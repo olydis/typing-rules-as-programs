@@ -43,16 +43,16 @@ Lemma clause_registers_inv : forall clause N D M R,
   M = N /\ R = D.
 Proof.
   intros clause N D M R Hreg H; destruct (Hreg M) as [[-> HM]|[_ HM]].
-  - pose proof (eval_deterministic _ _ H _ HM) as HE; inversion HE; auto.
-  - pose proof (eval_deterministic _ _ H _ HM); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ HM) as HE; inversion HE; auto.
+  - pose proof (eval_deterministic _ _ _ H _ HM); discriminate.
 Qed.
 
 Lemma tcase_never_fork : forall N R M l r,
   to_tree (tcase (Val N) (Val R)) @ M ==> Fk l r -> False.
 Proof.
   intros N R M l r H; destruct (combination_eq_dec N M) as [->|HM].
-  - pose proof (eval_deterministic _ _ H _ (tcase_eq M (Val R))); discriminate.
-  - pose proof (eval_deterministic _ _ H _ (tcase_neq N M _ HM)); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (tcase_eq M (Val R))); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ (tcase_neq N M _ HM)); discriminate.
 Qed.
 
 
@@ -94,7 +94,7 @@ Proof.
   intros AI clause N D Hreg H2 C M ctor D' R U V Hs Ha Hc HE.
   destruct (clause_registers_inv _ _ _ _ _ Hreg Hs) as [_ ->].
   assert (HK : ('K1 D) @ app AI ==> D) by evaluate.
-  pose proof (eval_deterministic _ _ Ha _ HK) as ->.
+  pose proof (eval_deterministic _ _ _ Ha _ HK) as ->.
   exact (H2 C R U V Hc HE).
 Qed.
 
@@ -103,10 +103,10 @@ Lemma plain_function_declared_sound_for : forall AI : Decl,
 Proof.
   intros AI C N ctor D E U V Hs Hd Hc HE.
   destruct (combination_eq_dec N fun_nm) as [->|HN].
-  - pose proof (eval_deterministic _ _ Hs _ function_case_some) as HQ; inversion HQ; subst ctor.
+  - pose proof (eval_deterministic _ _ _ Hs _ function_case_some) as HQ; inversion HQ; subst ctor.
     apply (function_abstractor_sound AI C E U V); [|exact HE].
     eapply eval_appl; eassumption.
-  - pose proof (eval_deterministic _ _ Hs _ (function_case_none N HN)); discriminate.
+  - pose proof (eval_deterministic _ _ _ Hs _ (function_case_none N HN)); discriminate.
 Qed.
 
 Lemma function_case_never_fork : forall N l r, function_case @ N ==> Fk l r -> False.
@@ -119,5 +119,5 @@ Proof.
   assert (HE : empty_ontology @ N ==> refusal) by (unfold empty_ontology, refusal; evaluate).
   pose proof (declaration_K1_inv _ _ _ _ _ _ HE Hintro) as HC.
   assert (HL : ('K1 Lf) @ C ==> Lf) by evaluate.
-  pose proof (eval_deterministic _ _ HC _ HL); discriminate.
+  pose proof (eval_deterministic _ _ _ HC _ HL); discriminate.
 Qed.

@@ -22,6 +22,8 @@ From Stdlib Require Import String.
 Open Scope string_scope.
 Local Abbreviation app := typing.type_app.
 Local Abbreviation inf := typing.infer.
+Import List.ListNotations.
+Local Open Scope list_scope.
 Set Default Proof Using "Type".
 
 (* ================================================================== *)
@@ -72,12 +74,8 @@ Proof. intros; unfold refusal; evaluate. Qed.
     [acc_pB]. *)
 
 Ltac fam_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first [ eassumption | apply equal_eval | apply equal1_bt
-            | apply acc_arg_eval | apply acc_pB_eval ]
-  end.
+  closed_eval_goal; first [ eassumption | apply equal_eval | apply equal1_bt
+            | apply acc_arg_eval | apply acc_pB_eval ].
 Ltac fam_eval :=
   first [ fam_atom | evaluate_expr_core fam_eval fam_head | idtac ]
 with fam_head :=
@@ -86,88 +84,108 @@ with fam_head :=
 
 (** * Height-indexed evaluation
 
-    [evaln n e v] has the rules of [eval]; each rule concludes at height
+    [evaln n f u v] has the rules of [eval]; each rule concludes at height
     [S n] from premises of height [n]. *)
-Inductive evaln : nat -> Application -> Combination -> Prop :=
-| evaln_appl : forall n d u w v,
-    evaln n d w -> evaln n (w @ u) v -> evaln (S n) (d @r u) v
+Inductive evaln : nat -> Combination -> Combination -> Combination -> Prop :=
 | evaln_to_stem : forall n u,
-    evaln (S n) (Lf @ u) (Sm u)
+    evaln (S n) Lf u (Sm u)
 | evaln_to_fork : forall n a u,
-    evaln (S n) (Sm a @ u) (Fk a u)
+    evaln (S n) (Sm a) u (Fk a u)
 | evaln_k : forall n a u,
-    evaln (S n) (Fk Lf a @ u) a
+    evaln (S n) (Fk Lf a) u a
 | evaln_s : forall n g f u a b v,
-    evaln n (g @ u) a -> evaln n (f @ u) b -> evaln n (a @ b) v ->
-    evaln (S n) (Fk (Sm g) f @ u) v
+    evaln n g u a -> evaln n f u b -> evaln n a b v ->
+    evaln (S n) (Fk (Sm g) f) u v
 | evaln_leaf : forall n f0 f1 f2,
-    evaln (S n) ('triage [f0, f1, f2] @ Lf) f0
+    evaln (S n) ('triage [f0, f1, f2]) Lf f0
 | evaln_stem : forall n f0 f1 f2 u v,
-    evaln n (f1 @ u) v ->
-    evaln (S n) ('triage [f0, f1, f2] @ Sm u) v
-| evaln_fork : forall n f0 f1 f2 x y v,
-    evaln n (f2 @ x @r y) v ->
-    evaln (S n) ('triage [f0, f1, f2] @ Fk x y) v.
+    evaln n f1 u v ->
+    evaln (S n) ('triage [f0, f1, f2]) (Sm u) v
+| evaln_fork : forall n f0 f1 f2 x y a v,
+    evaln n f2 x a -> evaln n a y v ->
+    evaln (S n) ('triage [f0, f1, f2]) (Fk x y) v.
 
-Lemma evaln_mono : forall n e v, evaln n e v ->
-  forall m, n <= m -> evaln m e v.
+(** [evalsn n f xs v]: applying [f] to the arguments [xs] in turn, each
+    application within height [n], gives [v]. *)
+Definition evalsn n f xs v := chain (evaln n) f (List.rev xs) v.
+
+Lemma evaln_mono : forall n f u v, evaln n f u v ->
+  forall m, n <= m -> evaln m f u v.
 Proof.
-  intros n e v H; induction H; intros m Hm;
+  intros n f u v H; induction H; intros m Hm;
     (destruct m as [|m]; [lia|]);
     econstructor; try apply IHevaln; try apply IHevaln1; try apply IHevaln2;
     try apply IHevaln3; lia.
 Qed.
 
-Lemma evaln_eval : forall n e v, evaln n e v -> e ==> v.
-Proof. intros n e v H; induction H; econstructor; eauto. Qed.
+Lemma evaln_eval : forall n f u v, evaln n f u v -> f @ u ==> v.
+Proof. intros n f u v H; induction H; econstructor; eauto. Qed.
 
-Lemma eval_evaln : forall e v, e ==> v -> exists n, evaln n e v.
+Lemma eval_evaln : forall f u v, f @ u ==> v -> exists n, evaln n f u v.
 Proof.
-  intros e v H; induction H;
+  intros f u v H; induction H;
     repeat match goal with H : exists _, _ |- _ => destruct H end;
     try (exists 1; constructor; fail).
   all: first
-    [ match goal with H1 : evaln ?a _ _, H2 : evaln ?b _ _, H3 : evaln ?c _ _ |- _ =>
+    [ match goal with H1 : evaln ?a _ _ _, H2 : evaln ?b _ _ _, H3 : evaln ?c _ _ _ |- _ =>
         exists (S (a + b + c)); econstructor; eapply evaln_mono; eauto; lia end
-    | match goal with H1 : evaln ?a _ _, H2 : evaln ?b _ _ |- _ =>
+    | match goal with H1 : evaln ?a _ _ _, H2 : evaln ?b _ _ _ |- _ =>
         exists (S (a + b)); econstructor; eapply evaln_mono; eauto; lia end
-    | match goal with H1 : evaln ?a _ _ |- _ => exists (S a); constructor; exact H1 end ].
+    | match goal with H1 : evaln ?a _ _ _ |- _ => exists (S a); constructor; exact H1 end ].
 Qed.
 
-(** Invert height-indexed evaluations whose application shape determines
-    the rule, as [invert_eval] does for [eval]. *)
+(** Invert height-indexed evaluations whose operator shape determines the
+    rule, as [invert_eval] does for [eval], and split applications in
+    turn. *)
 Ltac invert_evaln :=
   repeat match goal with
-  | H : evaln _ (_ @r _) _ |- _ => inv_out H
-  | H : evaln _ (Lf @ _) _ |- _ => inv_out H
-  | H : evaln _ (Sm _ @ _) _ |- _ => inv_out H
-  | H : evaln _ (Fk Lf _ @ _) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm _) _ @ _) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Fk _ _) _ @ _) _ |- _ => inv_out H
+  | H : evalsn _ _ _ _ |- _ => unfold evalsn in H; cbn [List.rev List.app] in H
+  | H : chain (evaln _) _ (_ :: _ :: _) _ |- _ => destruct H as [? [? ?]]
+  | H : chain (evaln _) _ (_ :: nil) _ |- _ => unchain1 H
+  | H : exists _, _ /\ evaln _ _ _ _ |- _ => destruct H as [? [? ?]]
+  | H : evaln _ Lf _ _ |- _ => inv_out H
+  | H : evaln _ (Sm _) _ _ |- _ => inv_out H
+  | H : evaln _ (Fk Lf _) _ _ |- _ => inv_out H
+  | H : evaln _ (Fk (Sm _) _) _ _ |- _ => inv_out H
+  | H : evaln _ (Fk (Fk _ _) _) _ _ |- _ => inv_out H
   end.
 
-Lemma evaln_lt : forall a k e v, evaln a e v -> a <= k -> evaln k e v.
+Lemma evalsn_eval : forall n f xs v, evalsn n f xs v -> apps f xs ==> v.
+Proof. intros n f xs v; unfold evalsn; apply chain_mono; exact (evaln_eval n). Qed.
+
+Lemma evalsn_mono : forall n f xs v, evalsn n f xs v ->
+  forall m, n <= m -> evalsn m f xs v.
+Proof.
+  intros n f xs v H m Hm; revert H; unfold evalsn; apply chain_mono.
+  intros; eapply evaln_mono; eassumption.
+Qed.
+
+Lemma eval_evalsn : forall f xs v, apps f xs ==> v -> exists n, evalsn n f xs v.
+Proof.
+  intros f xs; unfold evalsn; generalize (List.rev xs) as rxs; clear xs.
+  induction rxs as [|z rest IH]; intros v H; [exists 0; exact H|].
+  apply eval_appl_inv in H as [w [Hw Hz]].
+  destruct (IH w Hw) as [n Hn]; destruct (eval_evaln _ _ _ Hz) as [m Hm].
+  exists (n + m); apply chain_cons; exists w; split.
+  - revert Hn; apply chain_mono; intros; eapply evaln_mono; [eassumption|lia].
+  - eapply evaln_mono; [exact Hm|lia].
+Qed.
+
+Lemma evaln_lt : forall a k f u v, evaln a f u v -> a <= k -> evaln k f u v.
 Proof. intros; eapply evaln_mono; eauto. Qed.
 
-Lemma evaln_appl_pred : forall k d u w v,
-  0 < k -> evaln (pred k) d w -> evaln (pred k) (w @ u) v ->
-  evaln k (d @r u) v.
-Proof. intros; destruct k; [lia|]; apply evaln_appl with (w := w); assumption. Qed.
-
-(** Close a goal [evaln k e v] from height-indexed premises in context:
-    either a premise for [e] itself, or a reassembly of an application
-    whose second premise determines the intermediate value. *)
+(** Close a goal of height-indexed evaluation from premises in context of
+    smaller height, splitting applications in turn. *)
 Ltac evaln_close :=
   first
-  [ match goal with H : evaln ?a ?e ?v |- evaln ?k ?e ?v =>
-      apply (evaln_lt a k e v H); lia end
-  | match goal with
-    | |- evaln ?k (?d @r ?u) ?v =>
-        match goal with H2 : evaln ?b (?w @ u) ?v' |- _ =>
-          unify v v';
-          apply (evaln_appl_pred k d u w v);
-          [lia|evaln_close|apply (evaln_lt b _ _ _ H2); lia] end
-    end
+  [ match goal with H : evaln ?a ?f ?u ?v |- evaln ?k ?f ?u ?v =>
+      apply (evaln_lt a k f u v H); lia end
+  | match goal with |- evalsn _ _ _ _ =>
+      unfold evalsn; cbn [List.rev List.app]; evaln_close end
+  | match goal with |- chain (evaln _) _ (_ :: nil) _ =>
+      unchain1_goal; evaln_close end
+  | match goal with |- chain (evaln _) _ (_ :: _ :: _) _ =>
+      eexists; split; [evaln_close|evaln_close] end
   | eapply evaln_lt; [eassumption|lia] ].
 
 (** Choose the predecessor height for a goal [exists m, m < n /\ ...]. *)
@@ -179,7 +197,7 @@ Ltac exists_pred :=
 
 (** Convert all height-indexed hypotheses into ordinary evaluations. *)
 Ltac evaln_forget :=
-  repeat match goal with H : evaln _ _ _ |- _ =>
+  repeat match goal with H : evaln _ _ _ _ |- _ =>
     apply evaln_eval in H end.
 
 Local Opaque app inf equal equal1 get_tagname.
@@ -201,16 +219,16 @@ Qed.
 
 (** Fixpoint unfolding and fallback selection, keeping heights. *)
 Lemma Z_evaln_inv : forall n f x v,
-  evaln n (Z f @ x) v ->
-  exists m w, m < n /\ evaln m (f @ Z f) w /\ evaln m (w @ x) v.
+  evaln n (Z f) x v ->
+  exists m w, m < n /\ evaln m f (Z f) w /\ evaln m w x v.
 Proof.
   intros n f x v H; unfold Z in H; invert_evaln.
   match goal with
-  | H : evaln _ (dup_z @ _) _ |- _ =>
+  | H : evaln _ dup_z _ _ |- _ =>
       unfold dup_z at 1 in H
   end; invert_evaln.
   match goal with
-  | H : evaln _ (bz @ _) _ |- _ =>
+  | H : evaln _ bz _ _ |- _ =>
       unfold bz in H
   end; invert_evaln.
   exists_pred; split; [|evaln_close]; unfold Z; evaln_close.
@@ -218,9 +236,9 @@ Qed.
 
 
 Lemma extend_program_evaln_inv : forall n p f x r,
-  evaln n (extend_program @ p @r f @r x) r ->
+  evalsn n extend_program [p; f; x] r ->
   (exists v, p @ x ==> Sm v /\ r = v) \/
-  (p @ x ==> Lf /\ exists m, m < n /\ evaln m (f @ x) r) \/
+  (p @ x ==> Lf /\ exists m, m < n /\ evaln m f x r) \/
   (exists l q, p @ x ==> Fk l q /\ r = Lf).
 Proof.
   Local Transparent extend_program.
@@ -236,8 +254,8 @@ Qed.
 Local Transparent app.
 Lemma app_partial_evaln : forall AI n F w,
   (forall E N, F <> 'tagged[E,N]) ->
-  evaln n (app AI @ F) w ->
-  exists m, m < n /\ evaln m (default_body AI @ app AI @r F) w.
+  evaln n (app AI) F w ->
+  exists m, m < n /\ evalsn m (default_body AI) [app AI; F] w.
 Proof.
   intros AI n F w Hplain H.
   unfold type_app in H.
@@ -251,15 +269,14 @@ Proof.
   (* a fork: the F-level clause, then the ordinary clauses *)
   match goal with Hp : forall E N, ?F0 <> 'tagged[E,N] |- _ => set (F := F0) in * end.
   match goal with
-  | H10 : evaln _ (extend_program @ ?p) ?v0,
-    H9 : evaln _ (?v0 @ ?d) ?v1,
-    H8 : evaln _ (?v1 @ F) w |- _ =>
-    assert (HE : evaln (pred n)
-      (extend_program @ p @r d @r F) w)
+  | H10 : evaln _ extend_program ?p ?v0,
+    H9 : evaln _ ?v0 ?d ?v1,
+    H8 : evaln _ ?v1 F w |- _ =>
+    assert (HE : evalsn (pred n) extend_program [p; d; F] w)
       by evaln_close
   end.
   destruct (extend_program_evaln_inv _ _ _ _ _ HE) as [[v [HS _]]|[[_ [k [Hk Hk']]]|[l [q [HS _]]]]].
-  1,3: pose proof (eval_deterministic _ _ HS _ (wait_abstract_wait_plain _ F Hplain)); discriminate.
+  1,3: pose proof (eval_deterministic _ _ _ HS _ (wait_abstract_wait_plain _ F Hplain)); discriminate.
   exists (pred n); split; [lia|evaln_close].
 Qed.
 Local Opaque app.
@@ -268,17 +285,17 @@ Local Opaque app.
     the default clauses, at smaller height. *)
 Lemma app_evaln_head : forall AI n F U R,
   (forall E N, F <> 'tagged[E,N]) ->
-  evaln n (app AI @ F @r U) R ->
-  exists m w, m < n /\ evaln m (default_body AI @ app AI @r F) w /\ evaln m (w @ U) R.
+  evalsn n (app AI) [F; U] R ->
+  exists m w, m < n /\ evalsn m (default_body AI) [app AI; F] w /\ evaln n w U R.
 Proof.
   intros AI n F U R Hplain H.
-  inv_out H.
+  invert_evaln.
   match goal with
-  | H1 : evaln _ (app AI @ F) ?w,
-    H2 : evaln ?k (?w @ U) R |- _ =>
-    destruct (app_partial_evaln AI _ F w Hplain H1) as [m [Hm HD]]
+  | H1 : evaln _ (app AI) F ?w,
+    H2 : evaln _ ?w U R |- _ =>
+    destruct (app_partial_evaln AI _ F w Hplain H1) as [m [Hm HD]];
+    exists m, w; split; [lia|split; [exact HD|exact H2]]
   end.
-  exists n0; eexists; split; [lia|split; [evaln_close|eassumption]].
 Qed.
 
 
@@ -443,16 +460,16 @@ Proof.
  destruct (tagged_decide u) as [[C [M ->]]|Hplain].
  - destruct (combination_eq_dec N M) as [->|Hneq].
    + split; intro H.
-     * pose proof (eval_deterministic _ _ H _ (name_test_tag_hit M C)) as ->; apply tag_matches_hit.
-     * pose proof (eval_deterministic _ _ H _ (tag_matches_hit M C)) as ->; apply name_test_tag_hit.
+     * pose proof (eval_deterministic _ _ _ H _ (name_test_tag_hit M C)) as ->; apply tag_matches_hit.
+     * pose proof (eval_deterministic _ _ _ H _ (tag_matches_hit M C)) as ->; apply name_test_tag_hit.
    + assert (HM : forall D, 'tagged[C,M] <> 'tagged[D,N]) by (intros D HE; inversion HE; congruence).
      split; intro H.
-     * pose proof (eval_deterministic _ _ H _ (name_test_tag_miss N _ HM)) as ->; apply tag_matches_miss; exact HM.
-     * pose proof (eval_deterministic _ _ H _ (tag_matches_miss N _ HM)) as ->; apply name_test_tag_miss; exact HM.
+     * pose proof (eval_deterministic _ _ _ H _ (name_test_tag_miss N _ HM)) as ->; apply tag_matches_miss; exact HM.
+     * pose proof (eval_deterministic _ _ _ H _ (tag_matches_miss N _ HM)) as ->; apply name_test_tag_miss; exact HM.
  - assert (HM : forall C, u <> 'tagged[C,N]) by eauto.
    split; intro H.
-   + pose proof (eval_deterministic _ _ H _ (name_test_tag_miss N _ HM)) as ->; apply tag_matches_miss; exact HM.
-   + pose proof (eval_deterministic _ _ H _ (tag_matches_miss N _ HM)) as ->; apply name_test_tag_miss; exact HM.
+   + pose proof (eval_deterministic _ _ _ H _ (name_test_tag_miss N _ HM)) as ->; apply tag_matches_miss; exact HM.
+   + pose proof (eval_deterministic _ _ _ H _ (tag_matches_miss N _ HM)) as ->; apply name_test_tag_miss; exact HM.
 Qed.
 
 Lemma tag_free_tag_iff : forall AI u U N,
@@ -464,7 +481,7 @@ Proof.
    destruct (infer_tagged_source_inv AI f N U HU)
      as [C [M [E [-> [HC [HM HE]]]]]].
    pose proof (infer_tag_free AI N HN) as Hself.
-   pose proof (eval_deterministic _ _ HM _ Hself) as HH.
+   pose proof (eval_deterministic _ _ _ HM _ Hself) as HH.
    inversion HH; subst M; eauto.
  - intros [E ->].
    destruct (infer_tagged_result_inv AI u E N HU)
@@ -479,16 +496,16 @@ Proof.
  intros AI N u U b HN HU HB.
  destruct (tagged_decide U) as [[E [M ->]]|Hplain].
  - destruct (combination_eq_dec N M) as [->|Hneq].
-   + pose proof (eval_deterministic _ _ HB _ (tag_matches_hit M E)) as ->.
+   + pose proof (eval_deterministic _ _ _ HB _ (tag_matches_hit M E)) as ->.
      destruct (proj2 (tag_free_tag_iff AI u ('tagged[E,M]) M HN HU)
        ltac:(eauto)) as [f ->]; apply tag_matches_hit.
    + assert (HM : forall C, 'tagged[E,M] <> 'tagged[C,N]) by (intros C HE; inversion HE; congruence).
-     pose proof (eval_deterministic _ _ HB _ (tag_matches_miss N _ HM)) as ->.
+     pose proof (eval_deterministic _ _ _ HB _ (tag_matches_miss N _ HM)) as ->.
      apply tag_matches_miss; intros C HC.
      destruct (proj1 (tag_free_tag_iff AI u ('tagged[E,M]) N HN HU)
        ltac:(eauto)) as [D HD]; inversion HD; congruence.
  - assert (HM : forall C, U <> 'tagged[C,N]) by eauto.
-   pose proof (eval_deterministic _ _ HB _ (tag_matches_miss N U HM)) as ->.
+   pose proof (eval_deterministic _ _ _ HB _ (tag_matches_miss N U HM)) as ->.
    apply tag_matches_miss; intros C HC.
    destruct (proj1 (tag_free_tag_iff AI u U N HN HU) ltac:(eauto))
      as [E HE]; eapply Hplain; exact HE.
@@ -561,7 +578,7 @@ Lemma wrap_abstractor_inv : forall T C E,
   C = ('S2['I,'K1 T]) /\ E = wrap_eliminator T.
 Proof.
   intros T C E H; destruct (computed_wrap_abstractor_inv _ _ _ H) as [T' [HT [-> ->]]].
-  pose proof (eval_deterministic _ _ HT _ (fixed_payload_eval T)) as HE; inversion HE.
+  pose proof (eval_deterministic _ _ _ HT _ (fixed_payload_eval T)) as HE; inversion HE.
   split; reflexivity.
 Qed.
 
@@ -619,19 +636,19 @@ Proof.
  change (get_payload_program @ C ==> path_fn path_payload C) in HP.
  repeat match goal with
  | H1 : get_payload_program @ C ==> ?x |- _ =>
-     pose proof (eval_deterministic _ _ H1 _ HP); subst x; clear H1
+     pose proof (eval_deterministic _ _ _ H1 _ HP); subst x; clear H1
  end.
  pose proof (computed_wrap_builder_eval (path_fn path_payload C)) as HB.
  repeat match goal with
  | H1 : computed_wrap_builder @ path_fn path_payload C ==> ?x |- _ =>
-     pose proof (eval_deterministic _ _ H1 _ HB); subst x; clear H1
+     pose proof (eval_deterministic _ _ _ H1 _ HB); subst x; clear H1
  end.
  match goal with H1 : equal @ C ==> ?e |- _ =>
-   pose proof (eval_deterministic _ _ H1 _ (equal_eval C)); subst e; clear H1 end.
+   pose proof (eval_deterministic _ _ _ H1 _ (equal_eval C)); subst e; clear H1 end.
  match goal with H1 : equal1 C @ ?R ==> ?b |- _ =>
    destruct (combination_eq_dec C R) as [Heq|Hneq];
-   [ pose proof (eval_deterministic _ _ H1 _ (equal1_eq' C R Heq))
-   | pose proof (eval_deterministic _ _ H1 _ (equal1_neq C R Hneq)) ];
+   [ pose proof (eval_deterministic _ _ _ H1 _ (equal1_eq' C R Heq))
+   | pose proof (eval_deterministic _ _ _ H1 _ (equal1_neq C R Hneq)) ];
    subst b; clear H1; invert_eval
  end.
  all: eexists; split; [exact Heq|eassumption].
@@ -684,12 +701,31 @@ Proof.
  inversion HE'; subst a b; repeat split; assumption.
 Qed.
 
+(** Applying [f] to [u] with result [v] preserves typing. *)
+Definition typed_app AI f u v : Prop :=
+  forall F U T, inf AI @ f ==> Sm F -> inf AI @ u ==> Sm U ->
+    app AI @ F @r U ==> Sm T -> inf AI @ v ==> Sm T.
+
+(** Preservation for applications of values gives preservation for
+    applying in turn. *)
+Lemma typing_in_turn : forall AI,
+  (forall f u v, f @ u ==> v -> typed_app AI f u v) ->
+  forall f xs v T, apps f xs ==> v -> has_type AI f xs T -> inf AI @ v ==> Sm T.
+Proof.
+  intros AI Ha f xs; unfold has_type; generalize (List.rev xs) as rxs; clear xs.
+  induction rxs as [|z rest IH]; intros v T Hv HT.
+  - change (f = v) in Hv; subst; exact HT.
+  - apply eval_appl_inv in Hv as [w [Hw Hz]].
+    destruct HT as [D [U [HD [Hu HA]]]].
+    exact (Ha _ _ _ Hz D U T (IH w D Hw HD) Hu HA).
+Qed.
+
 (** The typing of the reduct of [triage[f0,f1,f2] @ x]. *)
 Definition reduct_typed AI f0 f1 f2 x T : Prop :=
   match x with
   | Lf => inf AI @ f0 ==> Sm T
-  | Sm y => has_type AI (f1 @ y) T
-  | Fk y z => has_type AI (f2 @ y @r z) T
+  | Sm y => has_type AI f1 [y] T
+  | Fk y z => has_type AI f2 [y; z] T
   end.
 
 Lemma children_reduct_typing : forall AI f0 f1 f2 x X,
@@ -699,12 +735,12 @@ Proof.
  intros AI f0 f1 f2 x X Htriage Hx.
  destruct (inf_children_inv AI f0 f1 f2 Htriage) as [H0 [H1 H2]].
  destruct x as [|y|y z].
- - pose proof (eval_deterministic _ _ Hx _ (typing.inf_leaf AI)) as HE;
+ - pose proof (eval_deterministic _ _ _ Hx _ (typing.inf_leaf AI)) as HE;
    inversion HE; subst; exact H0.
  - destruct (typing.infer_stem_inv AI _ _ Hx) as [Y [-> Hy]].
    eapply has_type_ap; [exact H1|exact Hy|apply app_update_stem].
  - destruct (typing.infer_fork_inv AI _ _ _ Hx) as [Y [Z [Hy [Hz HP]]]].
-   eapply has_type_apr; [|exact Hz|apply app_update_fork_second; exact HP].
+   eapply (has_type_apr _ _ [y]); [|exact Hz|apply app_update_fork_second; exact HP].
    eapply has_type_ap; [exact H2|exact Hy|apply app_update_fork_first].
 Qed.
 
@@ -713,7 +749,8 @@ Section FunctionSoundnessFacts.
 Variable AI : Decl.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
-Local Notation "F # U" := (type_app @ F @r U) (at level 45, left associativity).
+Local Notation "F # U ==> T" := (type_app @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 Lemma type_app_stem_recursive_function : forall app U V,
   type_app_stem @ app
     @r (Sm ('K1 (Z (((U --> V) --> (U --> V)) 'C tagged_fun))))
@@ -778,7 +815,8 @@ Variable AI : Combination.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 Local Abbreviation infer := (inf AI).
-Local Notation "F # U" := (type_app @ F @r U) (at level 45, left associativity).
+Local Notation "F # U ==> T" := (type_app @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 
 (** ** The rules without a premise *)
 
@@ -787,8 +825,8 @@ Lemma leaf_app_typing : forall u F U T,
   infer @ Sm u ==> Sm T.
 Proof.
   intros u F U T Hf Hu HT.
-  pose proof (eval_deterministic _ _ Hf _ (typing.inf_leaf AI)) as HF; inv_out HF.
-  pose proof (eval_deterministic _ _ HT _ (typing.app_leaf AI U)) as HE; inv_out HE.
+  pose proof (eval_deterministic _ _ _ Hf _ (typing.inf_leaf AI)) as HF; inv_out HF.
+  pose proof (applied_deterministic _ _ _ HT _ (typing.app_leaf AI U)) as HE; inv_out HE.
   apply typing.inf_stem; exact Hu.
 Qed.
 
@@ -862,7 +900,7 @@ Proof.
   - destruct (typing.infer_stem_inv AI _ _ Hx) as [Y [HX Hy]].
     eapply has_type_ap; [exact Hf1|exact Hy|apply query_app_type].
   - destruct (typing.infer_fork_inv AI _ _ _ Hx) as [Y [Z [Hy [Hz Hpair]]]].
-    eapply has_type_apr; [|exact Hz|apply query_app_type].
+    eapply (has_type_apr _ _ [y]); [|exact Hz|apply query_app_type].
     eapply has_type_ap; [exact Hf2|exact Hy|apply query_app_type].
 Qed.
 
@@ -887,7 +925,7 @@ Proof.
     + destruct (infer_stem_result_inv AI x N Hx) as [y [-> Hy]].
       eapply has_type_ap; [exact Hb|exact Hy|exact Hstep].
   - destruct (typing.infer_plain_fork_inv AI x L R HP Hx) as [y [z [-> [Hy Hz]]]].
-    eapply has_type_apr; [|exact Hz|exact HR].
+    eapply (has_type_apr _ _ [y]); [|exact Hz|exact HR].
     eapply has_type_ap; [exact Hq|exact Hy|exact HL].
 Qed.
 
@@ -900,38 +938,27 @@ Definition plain_intro_sound : Prop :=
     AI @ N @r type_app @r C ==> Sm E -> E @ type_app @r U ==> Sm V ->
     type_app @ C @r U ==> Sm V.
 
-Lemma plain_evaluation_preserves_typing : forall e v,
-  plain_intro_sound ->
-  e ==> v -> forall T,
-  has_type AI e T -> infer @ v ==> Sm T.
+Lemma plain_evaluation_preserves_typing : forall f u v,
+  plain_intro_sound -> f @ u ==> v -> typed_app AI f u v.
 Proof.
-  intros e v plain Heval; induction Heval; intros T HT.
-  - destruct (has_type_apr_inv _ _ _ _ HT) as [D [U [Hd [Hu HA]]]].
-    apply IHHeval2; eapply has_type_ap; [exact (IHHeval1 D Hd)|exact Hu|exact HA].
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    eapply leaf_app_typing; eassumption.
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    eapply stem_app_typing; eassumption.
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    eapply K_typing; eassumption.
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    destruct (S_app_typing_inv g f u F U T Hf Hu HA) as
+  intros f u v plain Heval; induction Heval; intros F U T Hf Hu HA.
+  - eapply leaf_app_typing; eassumption.
+  - eapply stem_app_typing; eassumption.
+  - eapply K_typing; eassumption.
+  - destruct (S_app_typing_inv g f u F U T Hf Hu HA) as
       [[G [H [VG [VH [Hg [Hh [HG [HH HR]]]]]]]]
       |[c [C [N [E [-> [Hc [Hh [HI HE]]]]]]]]].
-    + apply IHHeval3; eapply has_type_ap;
-        [apply IHHeval1; eapply has_type_ap; eassumption
-        |apply IHHeval2; eapply has_type_ap; eassumption|exact HR].
-    + pose proof (eval_deterministic _ _ Heval1 _ (eval_k c u)) as ->.
-      apply IHHeval3; eapply has_type_ap;
-        [exact Hc
-        |apply IHHeval2; eapply has_type_ap; [exact Hh|exact Hu|apply tagged_part_type]
-        |exact (plain C N E U T HI HE)].
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    exact (triage_application_typing f0 f1 f2 Lf F U T Hf Hu HA).
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    exact (IHHeval T (triage_application_typing f0 f1 f2 (Sm u) F U T Hf Hu HA)).
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
-    exact (IHHeval T (triage_application_typing f0 f1 f2 (Fk x y) F U T Hf Hu HA)).
+    + exact (IHHeval3 VG VH T (IHHeval1 G U VG Hg Hu HG) (IHHeval2 H U VH Hh Hu HH) HR).
+    + pose proof (eval_deterministic _ _ _ Heval1 _ (eval_k c u)) as ->.
+      exact (IHHeval3 C U T Hc (IHHeval2 _ U U Hh Hu (tagged_part_type N U))
+        (plain C N E U T HI HE)).
+  - exact (triage_application_typing f0 f1 f2 Lf F U T Hf Hu HA).
+  - destruct (triage_application_typing f0 f1 f2 (Sm u) F U T Hf Hu HA)
+      as [F1 [X [H1 [Hx HX]]]].
+    exact (IHHeval F1 X T H1 Hx HX).
+  - destruct (triage_application_typing f0 f1 f2 (Fk x y) F U T Hf Hu HA)
+      as [D [Y [[F2 [X [H2 [Hx HX]]]] [Hy HY]]]].
+    exact (IHHeval2 D Y T (IHHeval1 F2 X D H2 Hx HX) Hy HY).
 Qed.
 
 End Soundness.
@@ -986,7 +1013,7 @@ Lemma refusal_sound : forall AI, abstractor_sound_by_typing AI ('K1 Lf).
 Proof.
   intros AI C E U V H.
   assert (H0 : ('K1 Lf) @ C ==> Lf) by evaluate.
-  pose proof (eval_deterministic _ _ H _ H0); discriminate.
+  pose proof (eval_deterministic _ _ _ H _ H0); discriminate.
 Qed.
 
 (** The abstractors of a refusal, and what it answers at type application. *)
@@ -1002,137 +1029,151 @@ Qed.
 
 (** ** Bounded evaluation
 
-    [eval_bounded n e] evaluates the application [e] with recursion depth
-    at most [n]; every premise has a smaller bound.  It agrees with
-    [eval] ([eval_bounded_sound], [eval_bounded_complete]). *)
+    [eval_bounded n f u] applies [f] to [u] with recursion depth at most
+    [n]; every premise has a smaller bound.  It agrees with [eval]
+    ([eval_iff_bounded]). *)
 (** One level of evaluation, with [rec] evaluating the premises. *)
-Definition eval_step (rec : Application -> option Combination) (e : Application)
-  : option Combination :=
-  match e with
-  | d @r u =>
-    match rec d with
-    | Some w => rec (w @ u)
-    | None => None
-    end
-  | f @ u =>
-    match f with
-    | Lf => Some (Sm u)
-    | Sm a => Some (Fk a u)
-    | Fk Lf a => Some a
-    | Fk (Sm g) h =>
-      match rec (g @ u) with
-      | Some a =>
-        match rec (h @ u) with
-        | Some b => rec (a @ b)
-        | None => None
-        end
+Definition eval_step (rec : Combination -> Combination -> option Combination)
+  (f u : Combination) : option Combination :=
+  match f with
+  | Lf => Some (Sm u)
+  | Sm a => Some (Fk a u)
+  | Fk Lf a => Some a
+  | Fk (Sm g) h =>
+    match rec g u with
+    | Some a =>
+      match rec h u with
+      | Some b => rec a b
       | None => None
       end
-    | Fk (Fk f0 f1) f2 =>
-      match u with
-      | Lf => Some f0
-      | Sm x => rec (f1 @ x)
-      | Fk x y => rec (f2 @ x @r y)
+    | None => None
+    end
+  | Fk (Fk f0 f1) f2 =>
+    match u with
+    | Lf => Some f0
+    | Sm x => rec f1 x
+    | Fk x y =>
+      match rec f2 x with
+      | Some a => rec a y
+      | None => None
       end
     end
   end.
 
-Fixpoint eval_bounded (n : nat) (e : Application) : option Combination :=
+Fixpoint eval_bounded (n : nat) (f u : Combination) : option Combination :=
   match n with
   | O => None
-  | S n => eval_step (eval_bounded n) e
+  | S n => eval_step (eval_bounded n) f u
   end.
 
-Lemma eval_bounded_sound : forall n e v, eval_bounded n e = Some v -> e ==> v.
+Lemma eval_bounded_sound : forall n f u v, eval_bounded n f u = Some v -> f @ u ==> v.
 Proof.
-  induction n as [|n IH]; intros e v H; [discriminate|].
-  destruct e as [f u|d u]; cbn [eval_bounded eval_step] in H.
-  - destruct f as [|a|[|g|f0 f1] h].
+  induction n as [|n IH]; intros f u v H; [discriminate|].
+  destruct f as [|a|[|g|f0 f1] h]; cbn [eval_bounded eval_step] in H.
+  - inversion H; constructor.
+  - inversion H; constructor.
+  - inversion H; constructor.
+  - destruct (eval_bounded n g u) as [a|] eqn:E1; [|discriminate].
+    destruct (eval_bounded n h u) as [b|] eqn:E2; [|discriminate].
+    eapply eval_s; apply IH; eassumption.
+  - destruct u as [|x|x y].
     + inversion H; constructor.
-    + inversion H; constructor.
-    + inversion H; constructor.
-    + destruct (eval_bounded n (g @ u)) as [a|] eqn:E1; [|discriminate].
-      destruct (eval_bounded n (h @ u)) as [b|] eqn:E2; [|discriminate].
-      eapply eval_s; apply IH; eassumption.
-    + destruct u as [|x|x y].
-      * inversion H; constructor.
-      * apply eval_stem, IH, H.
-      * apply eval_fork, IH, H.
-  - destruct (eval_bounded n d) as [w|] eqn:E; [|discriminate].
-    eapply eval_appl; apply IH; eassumption.
+    + apply eval_stem, IH, H.
+    + destruct (eval_bounded n h x) as [a|] eqn:E; [|discriminate].
+      eapply eval_fork_args; apply IH; eassumption.
 Qed.
 
-Lemma eval_bounded_S : forall n e v, eval_bounded n e = Some v -> eval_bounded (S n) e = Some v.
+Lemma eval_bounded_S : forall n f u v, eval_bounded n f u = Some v -> eval_bounded (S n) f u = Some v.
 Proof.
-  induction n as [|n IH]; intros e v H; [discriminate|].
-  change (eval_bounded (S (S n)) e) with (eval_step (eval_bounded (S n)) e).
-  change (eval_bounded (S n) e) with (eval_step (eval_bounded n) e) in H.
-  destruct e as [f u|d u]; cbn [eval_step] in H |- *.
-  - destruct f as [|a|[|g|f0 f1] h]; try exact H.
-    + destruct (eval_bounded n (g @ u)) as [a|] eqn:E1; [|discriminate].
-      destruct (eval_bounded n (h @ u)) as [b|] eqn:E2; [|discriminate].
-      rewrite (IH _ _ E1), (IH _ _ E2); apply IH, H.
-    + destruct u as [|x|x y]; [exact H|apply IH, H|apply IH, H].
-  - destruct (eval_bounded n d) as [w|] eqn:E; [|discriminate].
-    rewrite (IH _ _ E); apply IH, H.
+  induction n as [|n IH]; intros f u v H; [discriminate|].
+  change (eval_bounded (S (S n)) f u) with (eval_step (eval_bounded (S n)) f u).
+  change (eval_bounded (S n) f u) with (eval_step (eval_bounded n) f u) in H.
+  destruct f as [|a|[|g|f0 f1] h]; cbn [eval_step] in H |- *; try exact H.
+  - destruct (eval_bounded n g u) as [a|] eqn:E1; [|discriminate].
+    destruct (eval_bounded n h u) as [b|] eqn:E2; [|discriminate].
+    rewrite (IH _ _ _ E1), (IH _ _ _ E2); apply IH, H.
+  - destruct u as [|x|x y]; [exact H|apply IH, H|].
+    destruct (eval_bounded n h x) as [a|] eqn:E; [|discriminate].
+    rewrite (IH _ _ _ E); apply IH, H.
 Qed.
 
-Lemma eval_bounded_le : forall n e v, eval_bounded n e = Some v ->
-  forall m, n <= m -> eval_bounded m e = Some v.
+Lemma eval_bounded_le : forall n f u v, eval_bounded n f u = Some v ->
+  forall m, n <= m -> eval_bounded m f u = Some v.
 Proof.
-  intros n e v H m Hle; induction Hle; [exact H|apply eval_bounded_S, IHHle].
+  intros n f u v H m Hle; induction Hle; [exact H|apply eval_bounded_S, IHHle].
 Qed.
 
-Lemma eval_bounded_complete : forall e v, e ==> v -> exists n, eval_bounded n e = Some v.
+Lemma eval_bounded_complete : forall f u v, f @ u ==> v -> exists n, eval_bounded n f u = Some v.
 Proof.
-  intros e v H; induction H;
+  intros f u v H; induction H;
     repeat match goal with H : exists _, _ |- _ => destruct H as [? H] end;
     try (exists 1; reflexivity).
-  - exists (S (x + x0)); cbn [eval_bounded eval_step].
-    rewrite (eval_bounded_le _ _ _ IHeval1 (x + x0) ltac:(lia)).
-    exact (eval_bounded_le _ _ _ IHeval2 (x + x0) ltac:(lia)).
   - exists (S (x + x0 + x1)); cbn [eval_bounded eval_step].
-    rewrite (eval_bounded_le _ _ _ IHeval1 (x + x0 + x1) ltac:(lia)),
-      (eval_bounded_le _ _ _ IHeval2 (x + x0 + x1) ltac:(lia)).
-    exact (eval_bounded_le _ _ _ IHeval3 (x + x0 + x1) ltac:(lia)).
-  - match goal with IH : eval_bounded ?k _ = _ |- _ => exists (S k); exact IH end.
-  - match goal with IH : eval_bounded ?k _ = _ |- _ => exists (S k); exact IH end.
+    rewrite (eval_bounded_le _ _ _ _ IHeval1 (x + x0 + x1) ltac:(lia)),
+      (eval_bounded_le _ _ _ _ IHeval2 (x + x0 + x1) ltac:(lia)).
+    exact (eval_bounded_le _ _ _ _ IHeval3 (x + x0 + x1) ltac:(lia)).
+  - match goal with IH : eval_bounded ?k _ _ = _ |- _ => exists (S k); exact IH end.
+  - match goal with IH1 : eval_bounded ?i f2 x = _, IH2 : eval_bounded ?j a y = _ |- _ =>
+      exists (S (i + j)); cbn [eval_bounded eval_step];
+      rewrite (eval_bounded_le _ _ _ _ IH1 (i + j) ltac:(lia));
+      exact (eval_bounded_le _ _ _ _ IH2 (i + j) ltac:(lia)) end.
 Qed.
 
 (** Evaluation is bounded evaluation at some depth. *)
-Theorem eval_iff_bounded : forall e v,
-  e ==> v <-> exists n, eval_bounded n e = Some v.
+Theorem eval_iff_bounded : forall f u v,
+  f @ u ==> v <-> exists n, eval_bounded n f u = Some v.
 Proof.
-  intros e v; split.
+  intros f u v; split.
   - apply eval_bounded_complete.
-  - intros [n H]; exact (eval_bounded_sound n e v H).
+  - intros [n H]; exact (eval_bounded_sound n f u v H).
 Qed.
 
-(** [app_type_bounded AI n f u] computes the type of [f @ u] within
-    bound [n]: [Some Lf] when inference or type application fails, [None]
-    when the bound runs out. *)
-Definition app_type_bounded (AI : Combination) (n : nat) (f u : Combination) :=
-  match eval_bounded n (inf AI @ f) with
-  | Some (Sm F) =>
-    match eval_bounded n (inf AI @ u) with
-    | Some (Sm U) => eval_bounded n (app AI @ F @r U)
-    | Some _ => Some Lf
+(** Applying in turn within bound [n] at each application. *)
+Fixpoint applied_bounded (n : nat) (f : Combination) (rxs : list Combination)
+  : option Combination :=
+  match rxs with
+  | nil => Some f
+  | z :: rest =>
+    match applied_bounded n f rest with
+    | Some w => eval_bounded n w z
     | None => None
     end
-  | Some _ => Some Lf
-  | None => None
+  end.
+
+Lemma applied_bounded_sound : forall n rxs f v,
+  applied_bounded n f rxs = Some v -> applied f rxs v.
+Proof.
+  intros n; induction rxs as [|z rest IH]; intros f v H; cbn [applied_bounded] in H.
+  - inversion H; exact eq_refl.
+  - destruct (applied_bounded n f rest) as [w|] eqn:E; [|discriminate].
+    exact (eval_appl _ _ _ _ _ (IH f w E) (eval_bounded_sound _ _ _ _ H)).
+Qed.
+
+(** Proves an evaluation by computing it within bound [n]. *)
+Ltac compute_eval n :=
+  first [ apply (eval_bounded_sound n) | apply (applied_bounded_sound n) ];
+  vm_compute; reflexivity.
+
+(** [app_type_bounded AI n f u] computes the type of [f] applied to [u]
+    within bound [n]: [Some Lf] when inference or type application fails,
+    [None] when the bound runs out. *)
+Definition app_type_bounded (AI : Combination) (n : nat) (f u : Combination) :=
+  match eval_bounded n (inf AI) f, eval_bounded n (inf AI) u with
+  | Some (Sm F), Some (Sm U) => applied_bounded n (app AI) [U; F]
+  | None, _ | Some (Sm _), None => None
+  | _, _ => Some Lf
   end.
 
 Lemma app_type_bounded_untyped : forall AI n f u T,
-  app_type_bounded AI n f u = Some Lf -> ~ has_type AI (f @ u) T.
+  app_type_bounded AI n f u = Some Lf -> ~ has_type AI f [u] T.
 Proof.
   intros AI n f u T Hc HT.
   destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]]; unfold app_type_bounded in Hc.
-  destruct (eval_bounded n (inf AI @ f)) as [x|] eqn:E1; [|discriminate].
-  pose proof (eval_deterministic _ _ Hf _ (eval_bounded_sound _ _ _ E1)) as <-.
-  destruct (eval_bounded n (inf AI @ u)) as [y|] eqn:E2; [|discriminate].
-  pose proof (eval_deterministic _ _ Hu _ (eval_bounded_sound _ _ _ E2)) as <-.
-  pose proof (eval_deterministic _ _ HA _ (eval_bounded_sound _ _ _ Hc)); discriminate.
+  destruct (eval_bounded n (inf AI) f) as [x|] eqn:E1; [|discriminate].
+  pose proof (eval_deterministic _ _ _ Hf _ (eval_bounded_sound _ _ _ _ E1)) as <-.
+  destruct (eval_bounded n (inf AI) u) as [y|] eqn:E2; [|discriminate].
+  pose proof (eval_deterministic _ _ _ Hu _ (eval_bounded_sound _ _ _ _ E2)) as <-.
+  pose proof (applied_deterministic _ _ _ HA _ (applied_bounded_sound _ _ _ _ Hc)); discriminate.
 Qed.
 
 (** ** Soundness for values
@@ -1141,20 +1182,17 @@ Qed.
     values when [E @ U ==> Sm V], [v : U] and [c @ v ==> w] imply
     [w : V].  The proof that evaluation preserves typing uses it at
     evaluations inside the evaluation being typed, so it may assume that
-    evaluation preserves typing ([ept]) at every evaluation of bound at
-    most that of [c @ v] ([ept_within]): the induction on evaluation is
-    an induction on the bound. *)
-Definition ept (AI : Combination) : Application -> Combination -> Prop :=
-  fun e w => forall T, has_type AI e T -> inf AI @ w ==> Sm T.
-
+    evaluation preserves typing at every evaluation of bound at most that
+    of [c @ v] ([ept_within]): the induction on evaluation is an
+    induction on the bound. *)
 Definition ept_within (AI : Combination) (n : nat) : Prop :=
-  forall m e w, m <= n -> eval_bounded m e = Some w -> ept AI e w.
+  forall m f u w, m <= n -> eval_bounded m f u = Some w -> typed_app AI f u w.
 
 Definition sound_abstractor (AI D : Combination) : Prop :=
   forall n C E U V c v w,
     D @ C ==> Sm E -> E @ app AI @r U ==> Sm V ->
     inf AI @ c ==> Sm C -> inf AI @ v ==> Sm U ->
-    ept_within AI n -> eval_bounded n (c @ v) = Some w -> inf AI @ w ==> Sm V.
+    ept_within AI n -> eval_bounded n c v = Some w -> inf AI @ w ==> Sm V.
 
 (** The declarations are sound when every abstractor they answer is
     sound for values. *)
@@ -1163,10 +1201,35 @@ Definition ontology_sound (AI : Combination) : Prop :=
 
 Lemma carrier_value_typing : forall AI n C U V c v w,
   app AI @ C @r U ==> Sm V -> inf AI @ c ==> Sm C -> inf AI @ v ==> Sm U ->
-  ept_within AI n -> eval_bounded n (c @ v) = Some w -> inf AI @ w ==> Sm V.
+  ept_within AI n -> eval_bounded n c v = Some w -> inf AI @ w ==> Sm V.
 Proof.
   intros AI n C U V c v w HC Hc Hv He Ht.
-  exact (He n _ _ (le_n n) Ht V (has_type_ap _ _ _ _ _ _ Hc Hv HC)).
+  exact (He n c v w (le_n n) Ht C U V Hc Hv HC).
+Qed.
+
+(** A triage continues with its reduct, one level down. *)
+Lemma triage_reduct_step : forall AI n f0 f1 f2 x w T,
+  ept_within AI n -> eval_bounded (S n) ('triage[f0,f1,f2]) x = Some w ->
+  reduct_typed AI f0 f1 f2 x T -> inf AI @ w ==> Sm T.
+Proof.
+  intros AI n f0 f1 f2 x w T He Ht HR.
+  destruct x as [|y|y z]; cbn [eval_bounded eval_step reduct_typed] in Ht, HR.
+  - inversion Ht; subst; exact HR.
+  - destruct (has_type_ap_inv _ _ _ _ HR) as [F [Y [Hf [Hy HA]]]].
+    exact (He n _ _ _ (le_n n) Ht F Y T Hf Hy HA).
+  - destruct (eval_bounded n f2 y) as [a|] eqn:E; [|discriminate].
+    destruct (has_type_apr_inv AI f2 [y] z T HR) as [D [Z [HD [Hz HA]]]].
+    destruct (has_type_ap_inv _ _ _ _ HD) as [F [Y [Hf [Hy HA']]]].
+    exact (He n _ _ _ (le_n n) Ht D Z T (He n _ _ _ (le_n n) E F Y D Hf Hy HA') Hz HA).
+Qed.
+
+Lemma triage_reduct_within : forall AI n f0 f1 f2 x w T,
+  ept_within AI n -> eval_bounded n ('triage[f0,f1,f2]) x = Some w ->
+  reduct_typed AI f0 f1 f2 x T -> inf AI @ w ==> Sm T.
+Proof.
+  intros AI [|n] f0 f1 f2 x w T He Ht HR; [discriminate|].
+  exact (triage_reduct_step AI n f0 f1 f2 x w T
+    (fun m f u w Hm => He m f u w ltac:(lia)) Ht HR).
 Qed.
 
 Lemma sound_by_typing_implies_sound : forall AI D,
@@ -1189,70 +1252,61 @@ Variable AI : Combination.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 Local Abbreviation infer := (inf AI).
-Local Notation "F # U" := (type_app @ F @r U) (at level 45, left associativity).
+Local Notation "F # U ==> T" := (type_app @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 
 (** Evaluation within bound [n] preserves typing, by induction on [n]. *)
 Lemma bounded_evaluation_preserves_typing :
   ontology_sound AI -> forall n, ept_within AI n.
 Proof.
   intros HSv n; induction n as [|n IH].
-  { intros m e w Hm H; inversion Hm; subst; discriminate. }
-  intros m e w Hm H T HT.
+  { intros m f u w Hm H; inversion Hm; subst; discriminate. }
+  intros m f u w Hm H F U T Hf Hu HA.
   destruct (Nat.le_succ_r m n) as [HL _]; destruct (HL Hm) as [Hle| ->];
-    [exact (IH m e w Hle H T HT)|]; clear HL Hm.
-  destruct e as [f u|d u]; cbn [eval_bounded eval_step] in H.
-  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]]; clear HT.
-    destruct f as [|a|[|g|f0 f1] h].
-    + inv_out H; eapply leaf_app_typing; eassumption.
-    + inv_out H; eapply stem_app_typing; eassumption.
-    + inv_out H; eapply K_typing; eassumption.
-    + destruct (eval_bounded n (g @ u)) as [a|] eqn:E1; [|discriminate].
-      destruct (eval_bounded n (h @ u)) as [b|] eqn:E2; [|discriminate].
-      destruct (S_app_typing_inv AI g h u F U T Hf Hu HA) as
-        [[G [H' [VG [VH [Hg [Hh [HG [HH HR]]]]]]]]
-        |[c [C [N [E [-> [Hc [Hh [HI HE]]]]]]]]].
-      * (* untagged: the reduct (g u)(h u) *)
-        apply (IH n _ _ (le_n n) H); eapply has_type_ap;
-          [apply (IH n _ _ (le_n n) E1); eapply has_type_ap; eassumption
-          |apply (IH n _ _ (le_n n) E2); eapply has_type_ap; eassumption|exact HR].
-      * (* tagged: soundness for values at the carrier c *)
-        assert (a = c) as ->.
-        { destruct n; [discriminate|]; cbn in E1; congruence. }
-        destruct (declaration_apply_inv _ _ _ _ _ HI) as [R0 [D0 [HR0 [HD0 HC0]]]].
-        exact (HSv N R0 D0 HR0 HD0 n C E U T c b w HC0 HE Hc
-          (IH n _ _ (le_n n) E2 U (has_type_ap _ _ _ _ _ _ Hh Hu (tagged_part_type AI N U)))
-          IH H).
-    + pose proof (triage_application_typing AI f0 f1 h u F U T Hf Hu HA) as HR.
-      destruct u as [|x|x y].
-      * inv_out H; exact HR.
-      * exact (IH n _ _ (le_n n) H T HR).
-      * exact (IH n _ _ (le_n n) H T HR).
-  - destruct (eval_bounded n d) as [v|] eqn:E; [|discriminate].
-    destruct (has_type_apr_inv _ _ _ _ HT) as [D [U [Hd [Hu HA]]]].
-    apply (IH n _ _ (le_n n) H); eapply has_type_ap;
-      [exact (IH n _ _ (le_n n) E D Hd)|exact Hu|exact HA].
+    [exact (IH m f u w Hle H F U T Hf Hu HA)|]; clear HL Hm.
+  destruct f as [|a|[|g|f0 f1] h]; cbn [eval_bounded eval_step] in H.
+  - inv_out H; eapply leaf_app_typing; eassumption.
+  - inv_out H; eapply stem_app_typing; eassumption.
+  - inv_out H; eapply K_typing; eassumption.
+  - destruct (eval_bounded n g u) as [a|] eqn:E1; [|discriminate].
+    destruct (eval_bounded n h u) as [b|] eqn:E2; [|discriminate].
+    destruct (S_app_typing_inv AI g h u F U T Hf Hu HA) as
+      [[G [H' [VG [VH [Hg [Hh [HG [HH HR]]]]]]]]
+      |[c [C [N [E [-> [Hc [Hh [HI HE]]]]]]]]].
+    + (* untagged: the reduct (g u)(h u) *)
+      exact (IH n a b w (le_n n) H VG VH T (IH n g u a (le_n n) E1 G U VG Hg Hu HG)
+        (IH n h u b (le_n n) E2 H' U VH Hh Hu HH) HR).
+    + (* tagged: soundness for values at the carrier c *)
+      assert (a = c) as ->.
+      { destruct n; [discriminate|]; cbn in E1; congruence. }
+      destruct (declaration_apply_inv _ _ _ _ _ HI) as [R0 [D0 [HR0 [HD0 HC0]]]].
+      exact (HSv N R0 D0 HR0 HD0 n C E U T c b w HC0 HE Hc
+        (IH n h u b (le_n n) E2 _ U U Hh Hu (tagged_part_type AI N U)) IH H).
+  - exact (triage_reduct_step AI n f0 f1 h u w T IH H
+      (triage_application_typing AI f0 f1 h u F U T Hf Hu HA)).
 Qed.
 
 End ValueSoundness.
 
-Theorem evaluation_preserves_typing : forall AI e v T,
-  ontology_sound AI -> e ==> v ->
-  has_type AI e T -> inf AI @ v ==> Sm T.
+(** Evaluation preserves typing, for a value applied to arguments in
+    turn. *)
+Theorem evaluation_preserves_typing : forall AI f xs v T,
+  ontology_sound AI -> apps f xs ==> v ->
+  has_type AI f xs T -> inf AI @ v ==> Sm T.
 Proof.
-  intros AI e v T HS He HT.
-  destruct (eval_bounded_complete _ _ He) as [n Hn].
-  exact (bounded_evaluation_preserves_typing AI HS n n e v (le_n n) Hn T HT).
+  intros AI f xs v T HS; apply typing_in_turn; intros g u w H.
+  destruct (eval_bounded_complete _ _ _ H) as [n Hn].
+  exact (bounded_evaluation_preserves_typing AI HS n n g u w (le_n n) Hn).
 Qed.
 
 (** The first form of the central theorem, by induction on the evaluation
     ([plain_evaluation_preserves_typing]), with no bound. *)
-Theorem ept_by_typing : forall AI e v T,
-  ontology_sound_by_typing AI -> e ==> v ->
-  has_type AI e T -> inf AI @ v ==> Sm T.
+Theorem ept_by_typing : forall AI f xs v T,
+  ontology_sound_by_typing AI -> apps f xs ==> v ->
+  has_type AI f xs T -> inf AI @ v ==> Sm T.
 Proof.
-  intros AI e v T HS He HT.
-  exact (plain_evaluation_preserves_typing AI e v
-           (ontology_sound_by_typing_plain AI HS) He T HT).
+  intros AI f xs v T HS; apply typing_in_turn; intros g u w.
+  exact (plain_evaluation_preserves_typing AI g u w (ontology_sound_by_typing_plain AI HS)).
 Qed.
 
 (** The children carrier [update_one_level r] of the Update family is
@@ -1262,7 +1316,7 @@ Qed.
     carrier is not sound by typing. *)
 Lemma children_value_typing : forall AI n c v U w,
   inf AI @ c ==> Sm (update_one_level ('Update)) -> inf AI @ v ==> Sm U ->
-  ept_within AI n -> eval_bounded n (c @ v) = Some w -> inf AI @ w ==> Sm U.
+  ept_within AI n -> eval_bounded n c v = Some w -> inf AI @ w ==> Sm U.
 Proof.
   intros AI n c v U w Hc Hv He Ht.
   pose proof Hc as Hc'; unfold update_one_level in Hc'.
@@ -1272,11 +1326,7 @@ Proof.
   destruct (typing.infer_plain_fork_inv AI _ Lf (Lf 'C ('Update)) ltac:(intros;discriminate) Hl)
     as [f0 [f1 [-> _]]].
   pose proof (children_reduct_typing AI f0 f1 f2 v U Hc Hv) as HR.
-  destruct n as [|n]; [discriminate|].
-  destruct v as [|x|x y]; cbn [eval_bounded eval_step] in Ht.
-  - inversion Ht; subst w; exact HR.
-  - exact (He n _ _ ltac:(lia) Ht U HR).
-  - exact (He n _ _ ltac:(lia) Ht U HR).
+  exact (triage_reduct_within AI n f0 f1 f2 v w U He Ht HR).
 Qed.
 
 (** The carrier [name_test n] of the IsNamed family is sound for values: a
@@ -1285,13 +1335,13 @@ Qed.
     name test on the value gives the name test on its type. *)
 Lemma is_named_value_typing : forall AI n c v N U V w,
   concrete N -> inf AI @ c ==> Sm (name_test N) -> inf AI @ v ==> Sm U ->
-  name_test N @ U ==> V -> eval_bounded n (c @ v) = Some w -> inf AI @ w ==> Sm V.
+  name_test N @ U ==> V -> eval_bounded n c v = Some w -> inf AI @ w ==> Sm V.
 Proof.
   intros AI n c v N U V w HN Hc Hv HB Ht.
   assert (HF : tag_free N = true) by (apply concrete_tag_free; exact HN).
   destruct (infer_name_test_inv AI c N Hc) as [m [-> Hn]].
   pose proof (inferred_name_test_preservation AI m N v U V HF Hn Hv HB) as HT.
-  pose proof (eval_deterministic _ _ (eval_bounded_sound _ _ _ Ht) _ HT) as ->.
+  pose proof (eval_deterministic _ _ _ (eval_bounded_sound _ _ _ _ Ht) _ HT) as ->.
   apply name_test_equivalent in HB.
   destruct (tag_matches_boolean N U V HB) as [-> | ->]; apply infer_tag_free; reflexivity.
 Qed.
@@ -1304,7 +1354,7 @@ Proof.
   match goal with H4 : get_name_test @ C ==> Sm ?n |- _ => apply get_name_test_inv in H4; subst C end.
   match goal with H5 : is_concrete @ ?n ==> ?b |- _ =>
     pose proof (is_concrete_spec n) as HC;
-    pose proof (eval_deterministic _ _ H5 _ HC) as HB;
+    pose proof (eval_deterministic _ _ _ H5 _ HC) as HB;
     destruct (concreteb n) eqn:HN; cbn in HB; subst b end.
   all: invert_eval; try (eexists; split; [reflexivity|split; [apply concreteb_sound; exact HN|reflexivity]]).
 Qed.
@@ -1322,7 +1372,7 @@ Qed.
 (** The one-level query carrier is sound for values. *)
 Lemma query_one_level_value_typing : forall AI n c v B U w,
   inf AI @ c ==> Sm (query_one_level B) -> inf AI @ v ==> Sm U ->
-  ept_within AI n -> eval_bounded n (c @ v) = Some w -> inf AI @ w ==> Sm B.
+  ept_within AI n -> eval_bounded n c v = Some w -> inf AI @ w ==> Sm B.
 Proof.
   intros AI n c v B U w Hc Hv He Ht.
   pose proof Hc as Hc'; unfold query_one_level in Hc'.
@@ -1332,11 +1382,7 @@ Proof.
   destruct (typing.infer_plain_fork_inv AI _ B ('Query[B]) ltac:(intros;discriminate) Hl)
     as [f0 [f1 [-> _]]].
   pose proof (query_triage_reduct_typing AI f0 f1 f2 v B U Hc Hv) as HR.
-  destruct n as [|n]; [discriminate|].
-  destruct v as [|x|x y]; cbn [eval_bounded eval_step] in Ht.
-  - inversion Ht; subst w; exact HR.
-  - exact (He n _ _ ltac:(lia) Ht B HR).
-  - exact (He n _ _ ltac:(lia) Ht B HR).
+  exact (triage_reduct_within AI n f0 f1 f2 v w B He Ht HR).
 Qed.
 
 (** Soundness of declarations built by [extend], one clause at a time. *)

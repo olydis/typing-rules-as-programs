@@ -82,8 +82,8 @@ Lemma tagged_fun_tag_free : tag_free tagged_fun = true.
 Proof. unfold tagged_fun; tag_free_tac. Qed.
 Section FunctionTypeFacts.
 Variable AI : Decl.
-Notation "F # U" := (type_app AI @ F @r U)
-  (at level 45, left associativity).
+Notation "F # U ==> T" := (type_app AI @ F @r U ==> T)
+  (at level 50, U at level 44, T at level 50).
 
 Lemma infer_fun_tagged : forall f F u U V,
   infer AI @ f ==> Sm F ->
@@ -150,7 +150,7 @@ Theorem infer_application : forall f F u U V,
   infer AI @ f ==> Sm F ->
   infer AI @ u ==> Sm U ->
   type_app AI @ F @r U ==> Sm V ->
-  has_type AI (f @ u) V.
+  has_type AI f [u] V.
 Proof.
   intros f F u U V Hf Hu Happ; eapply has_type_ap;
     [exact Hf|exact Hu|exact Happ].
@@ -390,39 +390,39 @@ Set Default Proof Using "Type".
 (** ** Height-decreasing inversions along the unfolding of [dither_fn] *)
 
 Lemma tagged_evaln_inv : forall n f t u v,
-  evaln n ('tagged[f,t] @ u) v -> exists m, m < n /\ evaln m (f @ u) v.
+  evaln n ('tagged[f,t]) u v -> exists m, m < n /\ evaln m f u v.
 Proof.
   intros n f t u v H; invert_evaln.
   eexists; split; [|eassumption]; lia.
 Qed.
 
 Lemma Z_evaln_unfold_inv : forall n f x v,
-  evaln n (Z f @ x) v ->
-  exists m w, m < n /\ f @ Z f ==> w /\ evaln m (w @ x) v.
+  evaln n (Z f) x v ->
+  exists m w, m < n /\ f @ Z f ==> w /\ evaln m w x v.
 Proof.
   intros n f x v H; unfold Z in H; invert_evaln.
   match goal with
-  | H : evaln _ (dup_z @ _) _ |- _ =>
+  | H : evaln _ dup_z _ _ |- _ =>
       unfold dup_z at 1 in H
   end; invert_evaln.
   match goal with
-  | H : evaln _ (bz @ _) _ |- _ =>
+  | H : evaln _ bz _ _ |- _ =>
       unfold bz in H
   end; invert_evaln.
   match goal with
-  | H : evaln _ (?f @ _) ?w, H' : evaln ?m (?w @ _) _ |- _ =>
+  | H : evaln _ ?f _ ?w, H' : evaln ?m ?w _ _ |- _ =>
       exists m, w; split; [lia|split; [|exact H']];
       apply evaln_eval in H; exact H
   end.
 Qed.
 
 Lemma typed_compose_evaln_inv : forall n g f d x v,
-  evaln n (typed_compose g f d @ x) v ->
-  exists m w, m < n /\ evaln m (f @ x) w.
+  evaln n (typed_compose g f d) x v ->
+  exists m w, m < n /\ evaln m f x w.
 Proof.
   intros n g f d x v H; unfold typed_compose, lam in H; invert_evaln.
   match goal with
-  | H : evaln ?m (?f @ _) ?w |- exists _ _, _ /\ evaln _ (?f @ _) _ =>
+  | H : evaln ?m ?f _ ?w |- exists _ _, _ /\ evaln _ ?f _ _ =>
       exists m, w; split; [lia|exact H]
   end.
 Qed.
@@ -436,14 +436,14 @@ Proof.
 Qed.
 
 Lemma dither_fn_tt_evaln_smaller : forall n v,
-  evaln n (dither_fn @ 'tt) v ->
-  exists m w, m < n /\ evaln m (dither_fn @ 'tt) w.
+  evaln n dither_fn 'tt v ->
+  exists m w, m < n /\ evaln m dither_fn 'tt w.
 Proof.
   intros n v H.
   unfold dither_fn at 1, fix_function in H.
   destruct (tagged_evaln_inv _ _ _ _ _ H) as [m1 [Hm1 H1]]; clear H.
   destruct (Z_evaln_unfold_inv _ _ _ _ H1) as [m2 [w [Hm2 [Hw H2]]]]; clear H1.
-  pose proof (eval_deterministic _ _ Hw _ dither_fn_functional_eval) as Heq;
+  pose proof (eval_deterministic _ _ _ Hw _ dither_fn_functional_eval) as Heq;
     subst w; clear Hw.
   destruct (typed_compose_evaln_inv _ _ _ _ _ _ H2) as [m3 [w [Hm3 H3]]];
     clear H2.
@@ -455,7 +455,7 @@ Qed.
 Lemma dither_fn_tt_no_value : forall v, ~ (dither_fn @ 'tt ==> v).
 Proof.
   intros v H.
-  destruct (eval_evaln _ _ H) as [n Hn]; clear H.
+  destruct (eval_evaln _ _ _ H) as [n Hn]; clear H.
   revert v Hn.
   induction n as [n IH] using lt_wf_ind; intros v Hn.
   destruct (dither_fn_tt_evaln_smaller _ _ Hn) as [m [w [Hm Hw]]].
@@ -465,7 +465,7 @@ Qed.
 (** ** The typing [dither_fn @ tt :: Bool] *)
 Lemma dither_fn_tt_typed : forall declarations : Decl,
   supports_booleans declarations ->
-  has_type declarations (dither_fn @ 'tt) ('Bool).
+  has_type declarations dither_fn ['tt] ('Bool).
 Proof.
   intros declarations Hsupports.
   eapply has_type_ap.
@@ -477,7 +477,7 @@ Qed.
 (** Paper Theorem: dither_fn @ tt is typed, yet has no value. *)
 Theorem dither_fn_typed_no_value : forall declarations : Decl,
   supports_booleans declarations ->
-  has_type declarations (dither_fn @ 'tt) ('Bool) /\
+  has_type declarations dither_fn ['tt] ('Bool) /\
   forall v, ~ (dither_fn @ 'tt ==> v).
 Proof.
   intros declarations H; split;

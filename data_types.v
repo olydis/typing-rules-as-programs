@@ -31,10 +31,7 @@ Definition nat_step_check :=
         @@ (Ref "a" @@ Ref "F" @@ Ref "U"))))).
 
 Local Ltac d_atom0 :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else first [ eassumption | apply equal_eval | apply equal1_eq ]
-  end.
+  closed_eval_goal; first [ eassumption | apply equal_eval | apply equal1_eq ].
 Local Ltac d_eval0 :=
   first [ d_atom0 | evaluate_expr_core d_eval0 d_head0 | idtac ]
 with d_head0 :=
@@ -95,8 +92,8 @@ Lemma nat_eliminator_app : forall a T V,
   nat_eliminator @ a @r T ==> V <-> nat_core a @ T ==> V.
 Proof.
   intros a T V; split; intro H.
-  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hwu]].
-    pose proof (eval_deterministic _ _ Hw _ (nat_eliminator_head a)); subst w.
+  - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hwu]].
+    pose proof (eval_deterministic _ _ _ Hw _ (nat_eliminator_head a)); subst w.
     exact Hwu.
   - eapply eval_appl; [apply nat_eliminator_head | exact H].
 Qed.
@@ -106,7 +103,7 @@ Lemma nat_core_eval : forall a U F,
 Proof.
   intros a U F Hs; pose proof (nat_step_check_eval a U F Hs) as Hcheck.
   inv_out Hcheck.
-  match goal with H : nat_step_check @ _ @r _ ==> _ |- _ => inv_out H end.
+  match goal with H : applied nat_step_check (_ :: _ :: nil) _ |- _ => destruct H as [? [? ?]] end.
   unfold nat_core.
   repeat first [eassumption | apply get_S_fields_some |
     apply get_product_parameters_some | progress evaluate].
@@ -191,7 +188,7 @@ Lemma nat_abstractor_inv : forall C E,
   E = nat_eliminator /\
     (C = 'fst \/ C = 'S2['snd,'Nat]).
 Proof.
-  intros C X H; pose proof (eval_deterministic _ _ H _ (nat_abstractor_eval C)) as HE.
+  intros C X H; pose proof (eval_deterministic _ _ _ H _ (nat_abstractor_eval C)) as HE.
   destruct (ceqb C 'fst) eqn:E1.
   - apply ceqb_true in E1; inversion HE; auto.
   - destruct (ceqb C nat_succ_carrier) eqn:E2; [|discriminate].
@@ -437,11 +434,7 @@ Proof.
 Qed.
 
 Local Ltac split_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first [ eassumption | apply mk_zero_eval | apply tagged_fun_eval ]
-  end.
+  closed_eval_goal; first [ eassumption | apply mk_zero_eval | apply tagged_fun_eval ].
 Local Ltac split_eval :=
   first [ split_atom | evaluate_expr_core split_eval split_head | idtac ]
 with split_head :=
@@ -484,25 +477,22 @@ Proof.
   assert (Hw : exists w, nat_split @ n ==> w) by (eexists; unfold nat_split; d_eval0).
   destruct Hw as [w Hw]; exists w; split; [exact Hw|split].
   - intros P r H; eapply eval_appl; eassumption.
-  - intros P r H; destruct (eval_appl_inv _ _ _ H) as [w' [Hw' Hr]].
-    pose proof (eval_deterministic _ _ Hw' _ Hw) as ->; exact Hr.
+  - intros P r H; destruct (eval_appl_inv _ _ _ _ H) as [w' [Hw' Hr]].
+    pose proof (eval_deterministic _ _ _ Hw' _ Hw) as ->; exact Hr.
 Qed.
 
 Local Opaque nat_split.
 Ltac ge_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first
-      [ eassumption
-      | match goal with
-        | Hp : forall P r, nat_split @ ?n @r P ==> r -> ?w @ P ==> r,
-          Hq : forall P r, ?w @ P ==> r -> nat_split @ ?n @r P ==> r |- eval (?w @ _) _ =>
-            apply Hp;
-            first [ apply nat_split_zero
-                  | apply nat_split_succ; apply lam_eval; ge_eval ]
-        end ]
-  end
+  closed_eval_goal;
+  first
+  [ eassumption
+  | match goal with
+    | Hp : forall P r, nat_split @ ?n @r P ==> r -> ?w @ P ==> r,
+      Hq : forall P r, ?w @ P ==> r -> nat_split @ ?n @r P ==> r |- ?w @ _ ==> _ =>
+        apply Hp;
+        first [ apply nat_split_zero
+              | apply nat_split_succ; apply lam_eval; ge_eval ]
+    end ]
 with ge_eval :=
   first [ ge_atom | evaluate_expr_core ge_eval ge_head | idtac ]
 with ge_head :=
@@ -605,15 +595,15 @@ Proof.
   assert (Hh : option_eliminator A @ a ==> fold_core ('wait2[option_step_check, A, a])).
   { unfold option_eliminator; apply wait_eval; unfold option_elim, fold_core; cbn; evaluate. }
   split; intro H.
-  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hwu]].
-    pose proof (eval_deterministic _ _ Hw _ Hh); subst w; exact Hwu.
+  - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hwu]].
+    pose proof (eval_deterministic _ _ _ Hw _ Hh); subst w; exact Hwu.
   - eapply eval_appl; [exact Hh|exact H].
 Qed.
 Lemma option_eliminator_eval : forall A a U F,
   a @ F @r A ==> Sm U -> option_eliminator A @ a @r (U '* F) ==> Sm U.
 Proof.
   intros A a U F H; apply option_eliminator_app; apply fold_core_eval.
-  destruct (eval_appl_inv _ _ _ (option_step_check_eval A a U F H)) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ _ (option_step_check_eval A a U F H)) as [w [Hw Hv]].
   eapply eval_appl; [apply wait2_eval; exact Hw|exact Hv].
 Qed.
 Lemma option_eliminator_inv : forall A a X U,
@@ -622,8 +612,8 @@ Lemma option_eliminator_inv : forall A a X U,
 Proof.
   intros A a X V H; apply option_eliminator_app, fold_core_inv in H.
   destruct H as [U [F [-> H]]].
-  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]]; apply wait2_eval_inv in Hw.
-  pose proof (eval_appl _ _ _ _ Hw Hv) as H'; apply option_step_check_inv in H'.
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]]; apply wait2_eval_inv in Hw.
+  pose proof (eval_appl _ _ _ _ _ Hw Hv) as H'; apply option_step_check_inv in H'.
   destruct H' as [-> H']; eexists; split; [reflexivity|exact H'].
 Qed.
 
@@ -751,7 +741,7 @@ Proof. intros g f x v H; inv_out H; invert_eval; eauto. Qed.
 Lemma option_onStem_onFork_eval : forall f A B R,
   f @ A @r B ==> R ->
   to_tree (''onStem1 (''onFork1 (Val f))) @ Sm (Fk A B) ==> R.
-Proof. intros f A B R H; simpl; evaluate. Qed.
+Proof. intros f A B R [w [H1 H2]]; simpl; evaluate. Qed.
 
 Lemma option_some_fields_inv : forall G F E,
   (option_some_fields @ G @r F ==> Sm E) ->
@@ -761,8 +751,8 @@ Proof.
   invert_eval.
   all: match goal with H1 : equal1 'snd @ ?g ==> ?b |- _ =>
     destruct (combination_eq_dec ('snd) g) as [Heq|Hneq];
-    [ subst g; pose proof (eval_deterministic _ _ H1 _ (equal1_eq 'snd)); subst b
-    | pose proof (eval_deterministic _ _ H1 _ (equal1_neq _ _ Hneq)); subst b ] end;
+    [ subst g; pose proof (eval_deterministic _ _ _ H1 _ (equal1_eq 'snd)); subst b
+    | pose proof (eval_deterministic _ _ _ H1 _ (equal1_neq _ _ Hneq)); subst b ] end;
     invert_eval.
   all: try match goal with H1 : get_K1 @ ?f ==> Sm ?A |- _ => apply get_K1_inv in H1 end.
   all: eexists; repeat split; eassumption.
@@ -775,10 +765,10 @@ Proof.
   intros F D E H; unfold option_none_fields in H; invert_eval.
   destruct (combination_eq_dec ('fst) F) as [<-|Hneq].
   - match goal with H1 : equal1 'fst @ 'fst ==> ?b |- _ =>
-      pose proof (eval_deterministic _ _ H1 _ (equal1_eq 'fst)); subst b end.
+      pose proof (eval_deterministic _ _ _ H1 _ (equal1_eq 'fst)); subst b end.
     invert_eval; auto.
   - match goal with H1 : equal1 'fst @ F ==> ?b |- _ =>
-      pose proof (eval_deterministic _ _ H1 _ (equal1_neq _ _ Hneq)); subst b end.
+      pose proof (eval_deterministic _ _ _ H1 _ (equal1_neq _ _ Hneq)); subst b end.
     invert_eval.
 Qed.
 
@@ -1052,8 +1042,8 @@ Proof.
   revert H HA HB; generalize (A '* B) as P; intros P H HA HB.
   unfold sum_step_check in H.
   inv_out H; invert_eval.
-  pose proof (eval_deterministic _ _ H11 _ HA) as ->.
-  pose proof (eval_deterministic _ _ H9 _ HB) as ->.
+  pose proof (eval_deterministic _ _ _ H11 _ HA) as ->.
+  pose proof (eval_deterministic _ _ _ H9 _ HB) as ->.
   all: match goal with
   | H1 : equal @ ?V ==> ?e, H2 : ?e @ ?W ==> ?b |- _ =>
     assert (Hequal : equal @ V @r W ==> b) by (eapply eval_appl; eauto);
@@ -1084,8 +1074,8 @@ Proof.
   assert (Hh : sum_eliminator A B @ a ==> fold_core ('wait2[sum_step_check, A '* B, a])).
   { unfold sum_eliminator; apply wait_eval; unfold sum_elim, fold_core; cbn; evaluate. }
   split; intro H.
-  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hwu]].
-    pose proof (eval_deterministic _ _ Hw _ Hh); subst w; exact Hwu.
+  - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hwu]].
+    pose proof (eval_deterministic _ _ _ Hw _ Hh); subst w; exact Hwu.
   - eapply eval_appl; [exact Hh|exact H].
 Qed.
 Lemma sum_eliminator_eval : forall A B a F G U,
@@ -1093,7 +1083,7 @@ Lemma sum_eliminator_eval : forall A B a F G U,
   sum_eliminator A B @ a @r (F '* G) ==> Sm U.
 Proof.
   intros A B a F G U H1 H2; apply sum_eliminator_app; apply fold_core_eval.
-  destruct (eval_appl_inv _ _ _ (sum_step_check_eval A B a F G U H1 H2)) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ _ (sum_step_check_eval A B a F G U H1 H2)) as [w [Hw Hv]].
   eapply eval_appl; [apply wait2_eval; exact Hw|exact Hv].
 Qed.
 Lemma sum_eliminator_inv : forall A B a X U,
@@ -1102,8 +1092,8 @@ Lemma sum_eliminator_inv : forall A B a X U,
 Proof.
   intros A B a X V H; apply sum_eliminator_app, fold_core_inv in H.
   destruct H as [F [G [-> H]]].
-  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]]; apply wait2_eval_inv in Hw.
-  pose proof (eval_appl _ _ _ _ Hw Hv) as H'; apply sum_step_check_inv in H'.
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]]; apply wait2_eval_inv in Hw.
+  pose proof (eval_appl _ _ _ _ _ Hw Hv) as H'; apply sum_step_check_inv in H'.
   destruct H' as [H1 H2]; exists F, G; repeat split; assumption.
 Qed.
 
@@ -1448,12 +1438,12 @@ Proof.
   intros G F D A B H.
   destruct (combination_eq_dec G 'fst) as [-> | Hneq].
   - destruct (K1_decide F) as [[A0 ->] | Hnone].
-    + pose proof (eval_deterministic _ _ H _
+    + pose proof (applied_deterministic _ _ _ H _
         (sum_left_fields_some A0 D)) as Heq.
       inversion Heq; auto.
-    + pose proof (eval_deterministic _ _ H _
+    + pose proof (applied_deterministic _ _ _ H _
         (sum_left_fields_wrong_tail F D Hnone)); discriminate.
-  - pose proof (eval_deterministic _ _ H _
+  - pose proof (applied_deterministic _ _ _ H _
       (sum_left_fields_wrong_head G F D Hneq)); discriminate.
 Qed.
 
@@ -1464,12 +1454,12 @@ Proof.
   intros G F D A B H.
   destruct (combination_eq_dec G 'snd) as [-> | Hneq].
   - destruct (K1_decide F) as [[B0 ->] | Hnone].
-    + pose proof (eval_deterministic _ _ H _
+    + pose proof (applied_deterministic _ _ _ H _
         (sum_right_fields_some D B0)) as Heq.
       inversion Heq; auto.
-    + pose proof (eval_deterministic _ _ H _
+    + pose proof (applied_deterministic _ _ _ H _
         (sum_right_fields_wrong_tail F D Hnone)); discriminate.
-  - pose proof (eval_deterministic _ _ H _
+  - pose proof (applied_deterministic _ _ _ H _
       (sum_right_fields_wrong_head G F D Hneq)); discriminate.
 Qed.
 
@@ -1568,8 +1558,9 @@ Proof.
   intros C E H; unfold sum_abstractor in H.
   destruct (option_compose_inv _ _ _ _ H) as [v [Hv Hs]].
   destruct v as [|v|A B]; [invert_eval | invert_eval |].
-  assert (Hb : sum_eliminator_maker @ A @r B ==> Sm E) by (inv_out Hs; assumption).
-  pose proof (eval_deterministic _ _ Hb _ (sum_eliminator_maker_eval A B)) as Heq.
+  assert (Hb : sum_eliminator_maker @ A @r B ==> Sm E)
+    by (inv_out Hs; eexists; split; eassumption).
+  pose proof (applied_deterministic _ _ _ Hb _ (sum_eliminator_maker_eval A B)) as Heq.
   inversion Heq; subst E.
   exists A, B; split; [reflexivity | eapply sum_fields_inv; exact Hv].
 Qed.
@@ -1819,12 +1810,8 @@ Lemma tagger_eval : forall n x, 'tagger[n] @ x ==> 'tagged[x,n].
 Proof. intros; evaluate. Qed.
 
 Ltac d_atom :=
-  match goal with
-  | |- eval ?e _ =>
-      tryif has_evar e then fail else
-      first [ eassumption | apply equal_eval | apply path_eval | apply tagged_fun_eval
-            | apply tagger_eval ]
-  end.
+  closed_eval_goal; first [ eassumption | apply equal_eval | apply path_eval | apply tagged_fun_eval
+            | apply tagger_eval ].
 Ltac d_eval :=
   first [ d_atom | evaluate_expr_core d_eval d_head | idtac ]
 with d_head :=
@@ -2235,15 +2222,15 @@ Proof.
   assert (Hh : list_eliminator A @ a ==> fold_core ('wait2[list_step_check, A, a])).
   { unfold list_eliminator; apply wait_eval; unfold list_elim, fold_core; cbn; evaluate. }
   split; intro H.
-  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hwu]].
-    pose proof (eval_deterministic _ _ Hw _ Hh); subst w; exact Hwu.
+  - destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hwu]].
+    pose proof (eval_deterministic _ _ _ Hw _ Hh); subst w; exact Hwu.
   - eapply eval_appl; [exact Hh|exact H].
 Qed.
 Lemma list_eliminator_eval : forall A a U F,
   a @ F @r (A '* U) ==> Sm U -> list_eliminator A @ a @r (U '* F) ==> Sm U.
 Proof.
   intros A a U F H; apply list_eliminator_app; apply fold_core_eval.
-  destruct (eval_appl_inv _ _ _ (list_step_check_eval A a U F H)) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ _ (list_step_check_eval A a U F H)) as [w [Hw Hv]].
   eapply eval_appl; [apply wait2_eval; exact Hw|exact Hv].
 Qed.
 Lemma list_eliminator_inv : forall A a X V,
@@ -2252,8 +2239,8 @@ Lemma list_eliminator_inv : forall A a X V,
 Proof.
   intros A a X V H; apply list_eliminator_app, fold_core_inv in H.
   destruct H as [U [F [-> H]]].
-  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]]; apply wait2_eval_inv in Hw.
-  pose proof (eval_appl _ _ _ _ Hw Hv) as H'; apply list_step_check_inv in H'.
+  destruct (eval_appl_inv _ _ _ _ H) as [w [Hw Hv]]; apply wait2_eval_inv in Hw.
+  pose proof (eval_appl _ _ _ _ _ Hw Hv) as H'; apply list_step_check_inv in H'.
   destruct H' as [-> H']; eexists; split; [reflexivity|exact H'].
 Qed.
 
@@ -2322,7 +2309,7 @@ Lemma list_abstractor_inv : forall C E,
     (C = 'decorate['fst,A] \/ C = cell_carrier A ('List[A])).
 Proof.
   intros C E H.
-  pose proof (eval_deterministic _ _ H _ (list_abstractor_eval C)) as HE.
+  pose proof (eval_deterministic _ _ _ H _ (list_abstractor_eval C)) as HE.
   unfold list_abstractor_result in HE; cbv zeta in HE.
   destruct (ceqb C ('decorate['fst,path_fn path_arg C])) eqn:E1.
   - apply ceqb_true in E1; inversion HE; eauto.
@@ -2502,7 +2489,7 @@ Proof. intros AI HL; split; [apply infer_append|intros; apply type_app_append; e
 
 Theorem infer_append_application : forall (AI : Decl) xs ys A, supports_list AI ->
   infer AI @ xs ==> Sm ('List[A]) -> infer AI @ ys ==> Sm ('List[A]) ->
-  has_type AI (append @ (xs '* ys)) ('List[A]).
+  has_type AI append [xs '* ys] ('List[A]).
 Proof.
   intros AI xs ys A HL Hx Hy; eapply infer_application;
     [apply infer_append|apply infer_product_value; eassumption|apply type_app_append; exact HL].
@@ -2560,7 +2547,7 @@ Lemma append_cons : forall x xs ys zs, is_list xs -> is_list ys ->
   append @ (xs '* ys) ==> zs -> append @ (cons_value x xs '* ys) ==> cons_value x zs.
 Proof.
   intros x xs ys zs [d [l ->]] [e [m ->]] H.
-  pose proof (eval_deterministic _ _ H _ (append_list l d e m)) as ->.
+  pose proof (eval_deterministic _ _ _ H _ (append_list l d e m)) as ->.
   rewrite <- !list_value_cons; apply append_list.
 Qed.
 
@@ -2969,7 +2956,7 @@ Proof using AI HL.
 Qed.
 Lemma infer_map_with_specialisation : forall f b F B,
   infer AI @ f ==> Sm F -> infer AI @ b ==> Sm B ->
-  has_type AI (map_with @ f @r b) (foldright_value (map_step_value F) ('List[B])).
+  has_type AI map_with [f; b] (foldright_value (map_step_value F) ('List[B])).
 Proof using AI HL.
   intros f b F B Hf Hb; destruct (type_app_map_with F B) as [R [H1 H2]].
   has_type_intro; [|exact Hb|exact H2].

@@ -161,60 +161,79 @@ Fixpoint tree_size t :=
 
 (** * Evaluation
 
-    Evaluation applies values to values.  An application [f @ u] applies
-    the value [f] to the value [u]; [d @r u] applies the value of the
-    application [d] to the value [u], so [f @ x @r y] applies [f] to [x]
-    and its value to [y].  Applications are not combinations: no program
-    receives one, and every argument is a value.
+    Evaluation is application of values: [f @ u ==> v] says that the value
+    [f], applied to the value [u], gives the value [v].  Application is a
+    partial function of two values: an application may have no value, and
+    has at most one ([eval_deterministic]).  Nothing represents an
+    application; its operator, argument and result are values.
 
-    An application [f @ u] dispatches on the shape of [f]:
+    Applying [f] to [u] dispatches on the shape of [f]:
 
-    - [Lf @ u] builds the stem [Sm u];
-    - [(Sm a) @ u] builds the fork [Fk a u];
-    - [(Fk Lf a) @ u = a]: this is [K a];
-    - [(Fk (Sm g) f) @ u] applies the value of [g @ u] to the value of
-      [f @ u]: this is [S g f], which duplicates the value [u], not a
-      computation;
-    - [(Fk (Fk f0 f1) f2) @ u]: this is [triage [f0, f1, f2]]; continue
-      with [f0], [f1 @ x] or [f2 @ x @r y] according as [u] is a leaf, a
-      stem [Sm x], or a fork [Fk x y]. *)
+    - [Lf] builds the stem [Sm u];
+    - [Sm a] builds the fork [Fk a u];
+    - [Fk Lf a] gives [a]: this is [K a];
+    - [Fk (Sm g) f] applies the result of applying [g] to [u] to the
+      result of applying [f] to [u]: this is [S g f], which duplicates the
+      value [u], not a computation;
+    - [Fk (Fk f0 f1) f2] is [triage [f0, f1, f2]]: it gives [f0], applies
+      [f1] to [x], or applies [f2] to [x] and the result to [y], according
+      as [u] is a leaf, a stem [Sm x], or a fork [Fk x y]. *)
 
-Inductive Application : Set :=
-| Ap : Combination -> Combination -> Application
-| Apr : Application -> Combination -> Application.
-
-(** [f @ u] applies the value [f] to the value [u]; [d @r u] applies the
-    value of [d] to the value [u].  [d ==> v] is evaluation, and
-    [d ~~> e] says that [d] computes whatever [e] computes. *)
-
-Notation "f @ u" := (Ap f u) (at level 45, left associativity).
-Notation "d @r u" := (Apr d u) (at level 45, left associativity).
-
-Inductive eval : Application -> Combination -> Prop :=
-| eval_appl : forall d u w v,
-    eval d w -> eval (w @ u) v -> eval (d @r u) v
+Inductive eval : Combination -> Combination -> Combination -> Prop :=
 | eval_to_stem : forall u,
-    eval (Lf @ u) (Sm u)
+    eval Lf u (Sm u)
 | eval_to_fork : forall a u,
-    eval (Sm a @ u) (Fk a u)
+    eval (Sm a) u (Fk a u)
 | eval_k : forall a u,
-    eval (Fk Lf a @ u) a
+    eval (Fk Lf a) u a
 | eval_s : forall g f u a b v,
-    eval (g @ u) a -> eval (f @ u) b -> eval (a @ b) v ->
-    eval (Fk (Sm g) f @ u) v
+    eval g u a -> eval f u b -> eval a b v -> eval (Fk (Sm g) f) u v
 | eval_leaf : forall f0 f1 f2,
-    eval ('triage [f0, f1, f2] @ Lf) f0
+    eval ('triage [f0, f1, f2]) Lf f0
 | eval_stem : forall f0 f1 f2 u v,
-    eval (f1 @ u) v ->
-    eval ('triage [f0, f1, f2] @ Sm u) v
-| eval_fork : forall f0 f1 f2 x y v,
-    eval (f2 @ x @r y) v ->
-    eval ('triage [f0, f1, f2] @ Fk x y) v.
+    eval f1 u v -> eval ('triage [f0, f1, f2]) (Sm u) v
+| eval_fork_args : forall f0 f1 f2 x y a v,
+    eval f2 x a -> eval a y v -> eval ('triage [f0, f1, f2]) (Fk x y) v.
 
 Global Hint Constructors eval : TreeHintDb.
 
-Notation "e ==> v" := (eval e v) (at level 50).
-Notation "d ~~> e" := (forall v, e ==> v -> d ==> v) (at level 50).
+Notation "f @ u ==> v" := (eval f u v) (at level 50, u at level 44, v at level 50).
+
+(** [chain R f rxs v]: applying [f] to the arguments [rxs] in turn, each
+    application by [R], gives [v].  The list holds the arguments last
+    first, so that the last application is the outermost. *)
+Fixpoint chain (R : Combination -> Combination -> Combination -> Prop)
+    (f : Combination) (rxs : list Combination) (v : Combination) : Prop :=
+  match rxs with
+  | nil => f = v
+  | z :: nil => R f z v
+  | z :: y :: nil => exists w, R f y w /\ R w z v
+  | z :: rest => exists w, chain R f rest w /\ R w z v
+  end.
+
+(** Simplification leaves a chain whole, as one statement about applying
+    in turn; the tactics below split it explicitly. *)
+Arguments chain : simpl never.
+
+(** A chain of one application is that application. *)
+Ltac unchain1 H := match type of H with chain ?R ?f (?z :: nil) ?v => change (R f z v) in H end.
+Ltac unchain1_goal := match goal with |- chain ?R ?f (?z :: nil) ?v => change (R f z v) end.
+
+(** [f @ x1 @r x2 @r ... @r xn ==> v]: applying [f] to [x1], the result to
+    [x2], and so on, gives [v]. *)
+Abbreviation applied := (chain eval).
+
+Notation "f @ x @r y @r .. @r z ==> v" :=
+  (applied f (cons z .. (cons y (cons x nil)) ..) v)
+  (at level 50, x at level 44, y at level 44, z at level 44, v at level 50).
+
+(** Inverting a hypothesis that applies in turn splits off its last
+    application. *)
+Ltac inv_out H ::=
+  match type of H with
+  | applied _ (_ :: _ :: _) _ => destruct H as [? [? ?]]
+  | _ => inversion H; clear H; subst
+  end.
 
 (** ** Determinism
 
@@ -225,100 +244,161 @@ Notation "d ~~> e" := (forall v, e ==> v -> d ==> v) (at level 50).
     the corresponding premise of the second derivation. *)
 
 Theorem eval_deterministic :
-  forall e v, e ==> v -> forall v', e ==> v' -> v = v'.
+  forall f u v, f @ u ==> v -> forall v', f @ u ==> v' -> v = v'.
 Proof.
-  intros e v Hev; induction Hev; intros v' Hev'; inv_out Hev';
+  intros f u v Hev; induction Hev; intros v' Hev'; inv_out Hev';
     repeat match goal with
-      | IH : forall w, ?e ==> w -> _ = w, H : ?e ==> _ |- _ =>
+      | IH : forall w, ?f @ ?u ==> w -> _ = w, H : ?f @ ?u ==> _ |- _ =>
           apply IH in H; inv_out H
       end; auto.
+Qed.
+
+(** Applying in turn: the last application takes the result of the others. *)
+Lemma chain_cons : forall R f rest z v,
+  chain R f (z :: rest) v <-> exists w, chain R f rest w /\ R w z v.
+Proof.
+  intros R f [|y [|x rest]] z v; try reflexivity.
+  split; [intro H; exists f; split; [exact eq_refl|exact H]|].
+  intros [w [Hw H]]; change (f = w) in Hw; subst; exact H.
+Qed.
+
+Lemma chain_mono : forall (R1 R2 : Combination -> Combination -> Combination -> Prop),
+  (forall f u v, R1 f u v -> R2 f u v) ->
+  forall rxs f v, chain R1 f rxs v -> chain R2 f rxs v.
+Proof.
+  intros R1 R2 H; induction rxs as [|z rest IH]; intros f v Hc; [exact Hc|].
+  apply chain_cons in Hc as [w [Hw Hz]]; apply chain_cons; eauto.
+Qed.
+
+Lemma eval_appl : forall f rxs z w v,
+  applied f rxs w -> w @ z ==> v -> applied f (z :: rxs) v.
+Proof. intros; apply chain_cons; eauto. Qed.
+
+Lemma eval_appl_inv : forall f rxs z v,
+  applied f (z :: rxs) v -> exists w, applied f rxs w /\ w @ z ==> v.
+Proof. intros; apply chain_cons; assumption. Qed.
+
+Lemma applied_deterministic : forall rxs f v,
+  applied f rxs v -> forall v', applied f rxs v' -> v = v'.
+Proof.
+  induction rxs as [|z rest IH]; intros f v H v' H'.
+  - change (f = v) in H; change (f = v') in H'; congruence.
+  - apply eval_appl_inv in H as [w [Hw Hz]]; apply eval_appl_inv in H' as [w' [Hw' Hz']].
+    pose proof (IH _ _ Hw _ Hw') as <-; exact (eval_deterministic _ _ _ Hz _ Hz').
 Qed.
 
 (** Given two evaluations of the same application, identify their
     results (and discard the goal if they are manifestly distinct). *)
 Ltac unify_evals :=
   match goal with
-  | Hv1 : ?e ==> ?v1, Hv2 : ?e ==> ?v2 |- _ =>
+  | Hv1 : ?f @ ?u ==> ?v1, Hv2 : ?f @ ?u ==> ?v2 |- _ =>
       assert (v1 = v2) by (eapply eval_deterministic; eauto);
+      subst; clear Hv1 Hv2; try discriminate
+  | Hv1 : applied ?f ?rxs ?v1, Hv2 : applied ?f ?rxs ?v2 |- _ =>
+      assert (v1 = v2) by (eapply applied_deterministic; eauto);
       subst; clear Hv1 Hv2; try discriminate
   end.
 
-(** Invert one evaluation hypothesis as far as the shape of its
-    application permits. *)
-
-Ltac invert_eval1 :=
-  match goal with
-  | H : eval (_ @r _) _ |- _ => inv_out H
-  | H : eval (Lf @ _) _ |- _ => inv_out H
-  | H : eval (Sm _ @ _) _ |- _ => inv_out H
-  | H : eval (Fk Lf _ @ _) _ |- _ => inv_out H
-  | H : eval (Fk (Sm _) _ @ _) _ |- _ => inv_out H
-  | H : eval (Fk (Fk _ _) _ @ _) _ |- _ => inv_out H
-  | _ => eauto
-  end.
-
-(** Repeatedly invert evaluation hypotheses as far as the shapes of their
-    applications permit. *)
-
-Ltac invert_eval :=
-  match goal with
-  | H : eval (_ @r _) _ |- _ => inv_out H; invert_eval
-  | H : eval (Lf @ _) _ |- _ => inv_out H; invert_eval
-  | H : eval (Sm _ @ _) _ |- _ => inv_out H; invert_eval
-  | H : eval (Fk Lf _ @ _) _ |- _ => inv_out H; invert_eval
-  | H : eval (Fk (Sm _) _ @ _) _ |- _ => inv_out H; invert_eval
-  | H : eval (Fk (Fk _ _) _ @ _) _ |- _ => inv_out H; invert_eval
-  | _ => eauto
-  end.
-
-(** An application [d @r u] has the value of [d] applied to [u]. *)
-Lemma eval_appl_inv :
-  forall d u v, d @r u ==> v -> exists w, d ==> w /\ w @ u ==> v.
-Proof. intros d u v H; inv_out H; eauto. Qed.
-
-(** An application of [S g f] applies the value of [g] to that of [f]. *)
+(** An application of [S g f] applies the result for [g] to that for [f]. *)
 Lemma eval_s_inv : forall g f u v,
   Fk (Sm g) f @ u ==> v -> exists a b, g @ u ==> a /\ f @ u ==> b /\ a @ b ==> v.
 Proof. intros g f u v H; inv_out H; eauto 6. Qed.
 
+(** Triage on a fork applies the fork case to both children in turn. *)
+Lemma eval_fork : forall f0 f1 f2 x y v,
+  f2 @ x @r y ==> v -> 'triage [f0, f1, f2] @ Fk x y ==> v.
+Proof. intros f0 f1 f2 x y v [a [Ha Hv]]; eapply eval_fork_args; eassumption. Qed.
+
+(** Invert one evaluation hypothesis as far as the shape of its
+    operator permits. *)
+
+Ltac invert_eval1 :=
+  match goal with
+  | H : applied _ (_ :: _ :: _) _ |- _ => destruct H as [? [? ?]]
+  | H : applied _ (_ :: nil) _ |- _ => unchain1 H
+  | H : exists _, _ /\ _ @ _ ==> _ |- _ => destruct H as [? [? ?]]
+  | H : Lf @ _ ==> _ |- _ => inv_out H
+  | H : Sm _ @ _ ==> _ |- _ => inv_out H
+  | H : Fk Lf _ @ _ ==> _ |- _ => inv_out H
+  | H : Fk (Sm _) _ @ _ ==> _ |- _ => inv_out H
+  | H : Fk (Fk _ _) _ @ _ ==> _ |- _ => inv_out H
+  | _ => eauto
+  end.
+
+(** Repeatedly invert evaluation hypotheses as far as the shapes of their
+    operators permit. *)
+
+Ltac invert_eval :=
+  match goal with
+  | H : applied _ (_ :: _ :: _) _ |- _ => destruct H as [? [? ?]]; invert_eval
+  | H : applied _ (_ :: nil) _ |- _ => unchain1 H; invert_eval
+  | H : exists _, _ /\ _ @ _ ==> _ |- _ => destruct H as [? [? ?]]; invert_eval
+  | H : Lf @ _ ==> _ |- _ => inv_out H; invert_eval
+  | H : Sm _ @ _ ==> _ |- _ => inv_out H; invert_eval
+  | H : Fk Lf _ @ _ ==> _ |- _ => inv_out H; invert_eval
+  | H : Fk (Sm _) _ @ _ ==> _ |- _ => inv_out H; invert_eval
+  | H : Fk (Fk _ _) _ @ _ ==> _ |- _ => inv_out H; invert_eval
+  | _ => eauto
+  end.
+
+(** Succeed on a goal of evaluation whose application holds no
+    existential variable. *)
+Ltac closed_eval_goal :=
+  match goal with
+  | |- ?f @ ?u ==> _ => tryif has_evar (f, u) then fail else idtac
+  | |- applied ?f ?rxs _ => tryif has_evar (f, rxs) then fail else idtac
+  end.
+
+(** Split every hypothesis that applies in turn into its applications. *)
+Ltac split_chains :=
+  repeat match goal with
+  | H : applied _ (_ :: _ :: _) _ |- _ => destruct H as [? [? ?]]
+  | H : applied _ (_ :: nil) _ |- _ => unchain1 H
+  end.
+
 (** ** Evaluation tactics
 
     [evaluate] builds evaluation derivations by syntax-directed proof
-    search.  It evaluates the operator of an application first, then
-    dispatches on the shape of its value.  It is deliberately permissive:
-    when no rule applies, [idtac] leaves the current goal unchanged.  Thus
-    [evaluate] is an incremental proof-building tactic, not a guarantee
-    that evaluation has finished; the enclosing proof must still account
-    for every remaining goal. *)
+    search.  Applying in turn, it evaluates the earlier applications
+    first; an application of values dispatches on the shape of its
+    operator.  It is deliberately permissive: when no rule applies, [idtac]
+    leaves the current goal unchanged.  Thus [evaluate] is an incremental
+    proof-building tactic, not a guarantee that evaluation has finished;
+    the enclosing proof must still account for every remaining goal. *)
 
 Ltac ev_hyp := first [ eassumption | assumption ].
 
 Ltac evaluate_expr_core recurse head :=
   match goal with
-  (* Evaluate the operator first. *)
-  | |- eval (_ @r _) _ =>
+  (* Applying in turn: the earlier applications first. *)
+  | |- applied _ (_ :: _ :: _) _ =>
       eapply eval_appl; [ recurse | head ]
+  | |- applied _ (_ :: nil) _ =>
+      unchain1_goal; head
+  (* The same, unfolded: an intermediate value, then the last application. *)
+  | |- exists _, _ =>
+      eexists; split; [ recurse | head ]
   (* An application of values is ready to dispatch. *)
-  | |- eval (_ @ _) _ =>
+  | |- _ @ _ ==> _ =>
       head
   end
 
 with evaluate_head_core recurse :=
   match goal with
-  | |- eval (Lf @ _) _ =>
+  | |- Lf @ _ ==> _ =>
       eapply eval_to_stem
-  | |- eval (Sm _ @ _) _ =>
+  | |- Sm _ @ _ ==> _ =>
       eapply eval_to_fork
-  | |- eval (Fk Lf _ @ _) _ =>
+  | |- Fk Lf _ @ _ ==> _ =>
       eapply eval_k
-  | |- eval (Fk (Sm _) _ @ _) _ =>
+  | |- Fk (Sm _) _ @ _ ==> _ =>
       eapply eval_s; [ recurse | recurse | recurse ]
-  | |- eval (Fk (Fk _ _) _ @ Lf) _ =>
+  | |- Fk (Fk _ _) _ @ Lf ==> _ =>
       eapply eval_leaf
-  | |- eval (Fk (Fk _ _) _ @ Sm _) _ =>
+  | |- Fk (Fk _ _) _ @ Sm _ ==> _ =>
       eapply eval_stem; recurse
-  | |- eval (Fk (Fk _ _) _ @ Fk _ _) _ =>
-      eapply eval_fork; recurse
+  | |- Fk (Fk _ _) _ @ Fk _ _ ==> _ =>
+      eapply eval_fork_args; [ recurse | recurse ]
   end.
 
 Ltac evaluate_expr :=
@@ -584,7 +664,7 @@ Proof. intros; cbv [bz dup_z]; evaluate. Qed.
 
 Lemma Z_unfold : forall f x v, f @ (Z f) @r x ==> v -> Z f @ x ==> v.
 Proof.
-  intros f x v Hv; destruct (eval_appl_inv _ _ _ Hv) as [w [Ha Hw]].
+  intros f x v Hv; destruct (eval_appl_inv _ _ _ _ Hv) as [w [Ha Hw]].
   apply wait_eval; eapply eval_appl; [|exact Hw].
   apply dup_z_eval; eapply eval_c; [apply bz_eval|exact Ha].
 Qed.
@@ -593,16 +673,16 @@ Lemma dup_z_inv : forall w v, dup_z @ w ==> v -> w @ w ==> v.
 Proof.
   intros w v H; cbv [dup_z] in H.
   destruct (eval_s_inv _ _ _ _ H) as [a [b [Ha [Hb Hab]]]].
-  pose proof (eval_deterministic _ _ Ha _ (I_eval w)) as ->.
-  pose proof (eval_deterministic _ _ Hb _ (I_eval w)) as ->; exact Hab.
+  pose proof (eval_deterministic _ _ _ Ha _ (I_eval w)) as ->.
+  pose proof (eval_deterministic _ _ _ Hb _ (I_eval w)) as ->; exact Hab.
 Qed.
 
 Lemma Z_unfold_inv : forall f x v, Z f @ x ==> v -> f @ (Z f) @r x ==> v.
 Proof.
   intros f x v Hv; apply wait_eval_inv in Hv.
-  destruct (eval_appl_inv _ _ _ Hv) as [w [Hd Hw]].
+  destruct (eval_appl_inv _ _ _ _ Hv) as [w [Hd Hw]].
   apply dup_z_inv, eval_c_inv in Hd; destruct Hd as [c [Hc Hf]].
-  pose proof (eval_deterministic _ _ Hc _ (bz_eval (f 'C bz))) as ->.
+  pose proof (eval_deterministic _ _ _ Hc _ (bz_eval (f 'C bz))) as ->.
   eapply eval_appl; [exact Hf|exact Hw].
 Qed.
 
@@ -921,7 +1001,7 @@ Notation "u ''* v" :=
 (** The same laws for the canonical pair value [u '* v] (tree.tex, Pairs). *)
 Lemma pair_apply : forall u v f r,
   f @ u @r v ==> r -> (u '* v) @ f ==> r.
-Proof. intros; inv_out H; evaluate; eauto. Qed.
+Proof. intros u v f r H; destruct H as [w [H1 H2]]; evaluate. Qed.
 
 Lemma fst_pair : forall u v, 'fst @ (u '* v) ==> u.
 Proof. intros; evaluate. Qed.
@@ -1018,8 +1098,8 @@ Qed.
 Lemma get_Z_inv: forall g f, get_Z @ g ==> Sm f -> g = Z f.
 Proof.
   intros g f H; destruct (get_Z_eval g) as [v [Hv [[E ->]|[_ ->]]]].
-  - pose proof (eval_deterministic _ _ H _ Hv) as HE; inversion HE; subst f; exact E.
-  - pose proof (eval_deterministic _ _ H _ Hv); discriminate.
+  - pose proof (eval_deterministic _ _ _ H _ Hv) as HE; inversion HE; subst f; exact E.
+  - pose proof (eval_deterministic _ _ _ H _ Hv); discriminate.
 Qed.
 
 (** Expose the two fields of an arbitrary composition. *)
@@ -1655,7 +1735,7 @@ Lemma concreteb_spec : forall c, concreteb c = true <-> concrete c.
 Proof.
   intro n; unfold concrete; pose proof (is_concrete_spec n) as H; split.
   - intro E; rewrite E in H; exact H.
-  - intro Hrun; pose proof (eval_deterministic _ _ Hrun _ H).
+  - intro Hrun; pose proof (eval_deterministic _ _ _ Hrun _ H).
     destruct (concreteb n); congruence.
 Qed.
 
@@ -2126,40 +2206,39 @@ Fixpoint num (n : nat) : Combination :=
   end.
 
 (** [apps P xs ==> v]: applying [P] to the values [xs] in turn gives [v]. *)
-Fixpoint applied (P : Combination) (xs : list Combination) (v : Combination) : Prop :=
-  match xs with
-  | [] => P = v
-  | x :: xs => exists w, P @ x ==> w /\ applied w xs v
-  end.
-
-Notation "'apps' P xs ==> v" := (applied P xs v)
+Notation "'apps' P xs ==> v" := (applied P (rev xs) v)
   (at level 50, P at level 9, xs at level 9).
+
+Lemma applied_app : forall rys rxs P v,
+  applied P (rys ++ rxs) v <-> exists w, applied P rxs w /\ applied w rys v.
+Proof.
+  induction rys as [|z rest IH]; intros rxs P v; cbn [app].
+  - split; [intro H; exists v; split; [exact H|exact eq_refl]|].
+    intros [w [Hw Hr]]; change (w = v) in Hr; subst; exact Hw.
+  - rewrite chain_cons; split.
+    + intros [u [Hu Hz]]; apply IH in Hu as [w [Hw Hr]].
+      exists w; split; [exact Hw|apply chain_cons; eauto].
+    + intros [w [Hw Hr]]; apply chain_cons in Hr as [u [Hu Hz]].
+      exists u; split; [apply IH; eauto|exact Hz].
+Qed.
 
 Lemma apps_cons_intro :
   forall P x xs w v, P @ x ==> w -> apps w xs ==> v -> apps P (x :: xs) ==> v.
-Proof. intros; cbn; eauto. Qed.
+Proof. intros; cbn [rev]; apply applied_app; eauto. Qed.
 
 Lemma apps_cons_inv :
   forall P x xs v, apps P (x :: xs) ==> v ->
   exists w, P @ x ==> w /\ apps w xs ==> v.
-Proof. intros P x xs v H; exact H. Qed.
+Proof. intros P x xs v H; cbn [rev] in H; apply applied_app in H; exact H. Qed.
 
 Lemma apps_app_intro :
   forall P xs ys w v, apps P xs ==> w -> apps w ys ==> v -> apps P (xs ++ ys) ==> v.
-Proof.
-  intros P xs; revert P; induction xs as [|x xs IH]; cbn; intros P ys w v Hw Hv.
-  - subst; exact Hv.
-  - destruct Hw as [u [Hu Hw]]; eauto.
-Qed.
+Proof. intros; rewrite rev_app_distr; apply applied_app; eauto. Qed.
 
 Lemma apps_app_inv :
   forall P xs ys v, apps P (xs ++ ys) ==> v ->
   exists w, apps P xs ==> w /\ apps w ys ==> v.
-Proof.
-  intros P xs; revert P; induction xs as [|x xs IH]; cbn; intros P ys v H.
-  - eauto.
-  - destruct H as [u [Hu H]]; destruct (IH _ _ _ H) as [w [Hw Hv]]; eauto.
-Qed.
+Proof. intros P xs ys v H; rewrite rev_app_distr in H; apply applied_app in H; exact H. Qed.
 
 Lemma apps_nil_inv : forall P v, apps P [] ==> v -> v = P.
 Proof. intros P v H; symmetry; exact H. Qed.
@@ -2167,10 +2246,21 @@ Proof. intros P v H; symmetry; exact H. Qed.
 Lemma apps_nil : forall P, apps P [] ==> P.
 Proof. reflexivity. Qed.
 
-(** Evaluate an iterated application argument by argument. *)
+(** A value that applies to every argument as [f] does may replace [f]
+    applied to arguments in turn. *)
+Lemma apps_head_iff : forall f g,
+  (forall u r, f @ u ==> r <-> g @ u ==> r) ->
+  forall x xs v, apps f (x :: xs) ==> v <-> apps g (x :: xs) ==> v.
+Proof.
+  intros f g Hg x xs v; split; intro H; apply apps_cons_inv in H as [w [Hw H]].
+  - exact (apps_cons_intro g x xs w v (proj1 (Hg x w) Hw) H).
+  - exact (apps_cons_intro f x xs w v (proj2 (Hg x w) Hw) H).
+Qed.
+
+(** Evaluate an application to a list of arguments, argument by argument. *)
 Ltac apps_evaluate :=
-  cbn [applied];
-  repeat first [ reflexivity | eexists; split; [ evaluate | cbn [applied] ] ].
+  cbn [rev app];
+  repeat first [ exact eq_refl | eexists; split; [ evaluate | idtac ] | evaluate ].
 
 
 (** * Combinators of arbitrary arity *)
@@ -2330,8 +2420,7 @@ Lemma Z_apps : forall B x xs v, apps B (Z B :: x :: xs) ==> v -> apps (Z B) (x :
 Proof.
   intros B x xs v H.
   apply (apps_app_inv B [Z B; x] xs) in H as [w [Hw Hv]].
-  cbn in Hw; destruct Hw as [w1 [H1 [w2 [H2 ->]]]].
-  eapply apps_cons_intro; [apply Z_unfold; eapply eval_appl; eassumption | exact Hv].
+  eapply apps_cons_intro; [apply Z_unfold; exact Hw | exact Hv].
 Qed.
 
 
@@ -2636,7 +2725,7 @@ Proof.
     apply konst_eval_n; rewrite length_map; exact Hl.
   - (* successor *)
     intros x; split; [reflexivity|]; cbn.
-    eexists; split; [apply eval_to_stem|reflexivity].
+    apply eval_to_stem.
   - (* projection *)
     intros i j ys x zs Hy Hz; split.
     + rewrite length_app; cbn; lia.
