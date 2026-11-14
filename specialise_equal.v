@@ -13,8 +13,8 @@
     - concrete programs stay concrete, so each is still its own type
       ([specialise_concrete], [specialise_self_typed]); a tester holds no
       label for any [c] ([equal1_concrete]);
-    - type and value of an expression are preserved when every replaced tester
-      is the function part of an application ([heads_only],
+    - type and value of an application are preserved when the walk changes
+      at most its head, a tester at a tag-free value ([heads_only],
       [specialise_typed], [specialise_preserves_evaluation]); without that
       the type changes ([specialise_changes_type]), and the excluded name
       tests would lose theirs ([specialised_name_test_untyped]);
@@ -26,7 +26,7 @@
 
 From Stdlib Require Import String Lia PeanoNat List NArith.
 From TreeTyping Require Import tree typing soundness booleans.
-From TreeTyping Require Import functions queries updates paper_ontology conditionals data_types arrays customisation self_typing optimisation steps.
+From TreeTyping Require Import functions queries updates paper_ontology conditionals data_types arrays customisation self_typing optimisation steps patching.
 Import ListNotations.
 
 Open Scope string_scope.
@@ -167,8 +167,7 @@ Theorem tester_agrees : forall c x v,
 Proof.
   intros c x v; split; intro H.
   - apply wait_eval_inv in H.
-    destruct (eval_pair_inv _ _ _ H) as [a [b [Ha [Hb Hv]]]].
-    inv_out Hb.
+    destruct (eval_appl_inv _ _ _ H) as [a [Ha Hv]].
     rewrite (eval_deterministic _ _ Ha _ (equal_eval c)) in Hv; exact Hv.
   - apply wait_eval; eapply eval_appl; [apply equal_eval|exact H].
 Qed.
@@ -385,7 +384,7 @@ Qed.
 (** The head of a typed application, after the walk, applies alike at the
     argument type. *)
 Lemma specialise_head_typing : forall f F U T,
-  fixedb f || redex_head f = true ->
+  (fixedb f || redex_head f)%bool = true ->
   infer AI @ f ==> Sm F -> tapp @ F @r U ==> Sm T ->
   exists F', infer AI @ specialise_fn f ==> Sm F' /\ tapp @ F' @r U ==> Sm T.
 Proof.
@@ -452,7 +451,7 @@ Proof.
   - intros e e' T Ho H He.
     replace e' with (specialise_app e).
     + exact (specialise_preserves_expression_typing AI e T Ho H).
-    + induction He; cbn [specialise_app];
+    + clear Ho H; induction He; cbn [specialise_app];
         repeat match goal with Hs : specialise_equal @ ?t ==> _ |- _ =>
           rewrite (eval_deterministic _ _ Hs _ (specialise_equal_eval t)) in *; clear Hs end;
         f_equal; auto.
@@ -620,7 +619,7 @@ Qed.
 Definition run_fuel := 1000 * 1000.
 
 Definition same_result (fuel : nat) (A B x : Combination) : bool :=
-  match run fuel (infer A) x, run fuel (infer B) x with
+  match optimisation.run fuel (infer A) x, optimisation.run fuel (infer B) x with
   | Some (Sm T), Some (Sm T') => ceqb T T'
   | _, _ => false
   end.
@@ -629,8 +628,8 @@ Lemma same_result_sound : forall fuel A B x, same_result fuel A B x = true ->
   exists T, infer A @ x ==> Sm T /\ infer B @ x ==> Sm T.
 Proof.
   intros fuel A B x H; unfold same_result in H.
-  destruct (run fuel (infer A) x) as [[|T|]|] eqn:E1; try discriminate.
-  destruct (run fuel (infer B) x) as [[|T'|]|] eqn:E2; try discriminate.
+  destruct (optimisation.run fuel (infer A) x) as [[|T|]|] eqn:E1; try discriminate.
+  destruct (optimisation.run fuel (infer B) x) as [[|T'|]|] eqn:E2; try discriminate.
   apply ceqb_true in H; subst T'.
   exists T; split; eapply run_sound; eassumption.
 Qed.

@@ -50,10 +50,10 @@ From Stdlib Require Import Arith Lia Bool List Nat String.
     that serve simultaneously as programs and as the data they act on --
     together with the untyped machinery needed to program with them.
 
-    - _Combinations_ are built from leaves, stems and forks.  Evaluation is
-      given by a big-step relation rather than a rewriting system, so that
-      evaluation is a partial function and divergent subterms cannot be
-      rewritten; applications are evaluated eagerly in both positions.
+    - _Combinations_ are built from leaves, stems and forks.  Evaluation
+      applies values to values: it is a big-step relation on applications
+      of values rather than a rewriting system, so that evaluation is a
+      partial function and every argument is already a value.
 
     - Reasoning about a big-step relation is harder than equational
       reasoning, so we prove that evaluation is _deterministic_ and develop
