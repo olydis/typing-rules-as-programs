@@ -944,8 +944,10 @@ Lemma value_step_typing : forall f u w T,
   infer_expression AI @ Sm w ==> Sm T.
 Proof using Hsound.
   intros f u w T Hw H; apply infer_expression_stem.
-  apply (evaluation_preserves_typing _ _ [u] _ _
-    (ontology_sound_by_typing_value _ Hsound) Hw), infer_expression_ap, H.
+  destruct (has_type_ap_inv _ _ _ _ (proj1 (infer_expression_ap _ _ _ _) H))
+    as [F [U [Hf [Hu HA]]]].
+  exact (evaluation_preserves_typing _ _ _ _ _ _ _
+    (ontology_sound_by_typing_value _ Hsound) Hw Hf Hu HA).
 Qed.
 
 Lemma ready_step_typing : forall f u T,

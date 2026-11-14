@@ -793,8 +793,7 @@ Theorem abstract_update_preserves_typing : forall AI u x U y,
   u @ x ==> y -> infer AI @ y ==> Sm U.
 Proof.
   intros AI u x U y HS Hu Hx HE.
-  apply (evaluation_preserves_typing _ _ [x] _ _ HS HE).
-  has_type_intro.
+  eapply (evaluation_preserves_typing _ _ _ _ _ _ _ HS HE).
   - exact Hu.
   - exact Hx.
   - apply type_app_Update.

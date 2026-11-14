@@ -1288,25 +1288,27 @@ Qed.
 
 End ValueSoundness.
 
-(** Evaluation preserves typing, for a value applied to arguments in
-    turn. *)
-Theorem evaluation_preserves_typing : forall AI f xs v T,
-  ontology_sound AI -> apps f xs ==> v ->
-  has_type AI f xs T -> inf AI @ v ==> Sm T.
+(** Evaluation preserves typing: the value of [f @ u] has the type that
+    type application gives for the types of [f] and [u]. *)
+Theorem evaluation_preserves_typing : forall AI f u v F U T,
+  ontology_sound AI -> f @ u ==> v ->
+  inf AI @ f ==> Sm F -> inf AI @ u ==> Sm U -> app AI @ F @r U ==> Sm T ->
+  inf AI @ v ==> Sm T.
 Proof.
-  intros AI f xs v T HS; apply typing_in_turn; intros g u w H.
+  intros AI f u v F U T HS H.
   destruct (eval_bounded_complete _ _ _ H) as [n Hn].
-  exact (bounded_evaluation_preserves_typing AI HS n n g u w (le_n n) Hn).
+  exact (bounded_evaluation_preserves_typing AI HS n n f u v (le_n n) Hn F U T).
 Qed.
 
 (** The first form of the central theorem, by induction on the evaluation
     ([plain_evaluation_preserves_typing]), with no bound. *)
-Theorem ept_by_typing : forall AI f xs v T,
-  ontology_sound_by_typing AI -> apps f xs ==> v ->
-  has_type AI f xs T -> inf AI @ v ==> Sm T.
+Theorem ept_by_typing : forall AI f u v F U T,
+  ontology_sound_by_typing AI -> f @ u ==> v ->
+  inf AI @ f ==> Sm F -> inf AI @ u ==> Sm U -> app AI @ F @r U ==> Sm T ->
+  inf AI @ v ==> Sm T.
 Proof.
-  intros AI f xs v T HS; apply typing_in_turn; intros g u w.
-  exact (plain_evaluation_preserves_typing AI g u w (ontology_sound_by_typing_plain AI HS)).
+  intros AI f u v F U T HS H.
+  exact (plain_evaluation_preserves_typing AI f u v (ontology_sound_by_typing_plain AI HS) H F U T).
 Qed.
 
 (** The children carrier [update_one_level r] of the Update family is

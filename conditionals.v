@@ -474,8 +474,7 @@ Lemma salary_here_preserves_typing : forall (AI : Decl) u U v,
  infer AI @ u ==> Sm U -> salary_here @ u ==> v -> infer AI @ v ==> Sm U.
 Proof.
  intros AI u U v HA HS HN HT Hu He.
- apply (evaluation_preserves_typing _ _ [u] _ _ HA He).
- has_type_intro;
+ eapply (evaluation_preserves_typing _ _ _ _ _ _ _ HA He);
  [apply infer_salary_here; assumption|
   exact Hu|apply type_app_salary_here; [assumption|assumption|exists u; exact Hu]].
 Qed.

@@ -507,8 +507,7 @@ Theorem typed_mu_values_are_numbers : forall k (f : mu_fun (S k)) xs v,
   infer paper_ontology @ v ==> Sm ('Nat).
 Proof.
   intros k f xs v Hl He.
-  apply (paper_evaluation_preserves_typing _ [tuple_of (map numeral xs)] _ _ He).
-  has_type_intro.
+  eapply (paper_evaluation_preserves_typing _ _ _ _ _ _ He).
   - apply infer_tcompile.
   - apply infer_tup;
       [apply paper_ontology_supports_number|exact Hl].

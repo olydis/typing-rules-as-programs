@@ -377,11 +377,11 @@ Proof.
     apply refusal_value_sound.
 Qed.
 
-Theorem paper_evaluation_preserves_typing :
-  forall f xs v T, apps f xs ==> v -> has_type paper_ontology f xs T ->
-    infer paper_ontology @ v ==> Sm T.
+Theorem paper_evaluation_preserves_typing : forall f u v F U T,
+  f @ u ==> v -> infer paper_ontology @ f ==> Sm F -> infer paper_ontology @ u ==> Sm U ->
+  type_app paper_ontology @ F @r U ==> Sm T -> infer paper_ontology @ v ==> Sm T.
 Proof.
-  intros f xs v T; exact (evaluation_preserves_typing _ f xs v T paper_ontology_sound).
+  intros f u v F U T; exact (evaluation_preserves_typing _ f u v F U T paper_ontology_sound).
 Qed.
 
 (** The bare name test cannot be typed at a salary (computed). *)

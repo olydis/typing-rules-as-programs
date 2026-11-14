@@ -53,8 +53,9 @@ results: `f @ x @r y ==> v` is `exists w, f @ x ==> w /\ w @ y ==> v`, and
 The type of `f` applied to arguments `xs`, `has_type AI f xs T`, is type
 application of the types of `f` and of the arguments, in turn
 (`typing.v`). The paper's statements about an expression are stated about
-a value and the arguments it is applied to: Theorems 3 and 5 say that if
-`apps f xs ==> v` and `has_type AI f xs T` then `v : T`, and the tools of
+a value and the arguments it is applied to. Theorems 3 and 5 are about one
+application: if `f @ u ==> v`, `f : F`, `u : U` and `F # U ==> Sm T` then
+`v : T`; applying to further arguments repeats it (`typing_in_turn`). The tools of
 "Towards Typed Tooling" act on that value and its arguments (on the value
 applied, for optimisation; on all of them, for patching).
 
