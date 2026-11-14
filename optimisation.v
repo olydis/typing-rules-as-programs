@@ -2167,6 +2167,16 @@ Proof.
   apply (proj1 (erase_app_eval_iff _ _ _)); apply increment_salary_eval.
 Qed.
 
+(** A type computed for an application is its type. *)
+Lemma app_type_bounded_typed : forall AI n f u T,
+  app_type_bounded AI n f u = Some (Sm T) -> has_type AI (f @ u) T.
+Proof.
+  intros AI n f u T H; unfold app_type_bounded in H.
+  destruct (eval_bounded n (inf AI @ f)) as [[|F|? ?]|] eqn:E1; try discriminate.
+  destruct (eval_bounded n (inf AI @ u)) as [[|U|? ?]|] eqn:E2; try discriminate.
+  has_type_intro; eapply eval_bounded_sound; eassumption.
+Qed.
+
 (** Erasing an unsafe head can leave an untyped application: the triage
     query [tq[tt, Kq tt, Kq (Kq tt)]] applied to [tt] is typed, its head is
     not safe, and the optimised application has no type (computed). *)
@@ -2176,8 +2186,7 @@ Lemma optimise_unsafe_head_untyped :
   ~ (exists T, has_type paper_ontology (optimise_fn ('tq['tt, 'Kq 'tt, 'Kq ('Kq 'tt)] @ 'tt)) T).
 Proof.
   split; [vm_compute; reflexivity|split].
-  - eexists; has_type_intro;
-      apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
+  - eexists; apply (app_type_bounded_typed _ (Nat.pow 10 6)); vm_compute; reflexivity.
   - intros [T H]; revert H; unfold optimise_fn; cbn [with_head head].
     apply (app_type_bounded_untyped _ (Nat.pow 10 6)); vm_compute; reflexivity.
 Qed.
