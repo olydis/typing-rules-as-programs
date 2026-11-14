@@ -9,9 +9,9 @@
     (functions.v) its application has no value, and unlike it, its typing
     has none either.
 
-    All proofs compare a recursive evaluation with the original through the
-    height-indexed copy [evaln] of [eval] (soundness.v), as in
-    [dither_fn_tt_no_value] (functions.v). *)
+    Each proof finds, inside an evaluation, an evaluation of the same
+    application at smaller height, using the height-indexed copy [evaln] of
+    [eval] (soundness.v), as in [dither_fn_tt_no_value] (functions.v). *)
 
 From Stdlib Require Import Arith Lia.
 From TreeTyping Require Import tree typing soundness booleans functions self_typing.
@@ -37,10 +37,8 @@ Lemma omega_omega_evaln_smaller : forall n v,
 Proof.
   intros n v H; unfold omega at 1 in H.
   inv_out H.
-  match goal with H : evaln _ (Fk (Fk _ _) _) _ |- _ => inv_out H end.
-  match goal with H : evaln _ (Fk (Sm _) (Fk _ _)) _ |- _ => inv_out H end.
   repeat match goal with
-  | H : evaln _ ('I @ _) ?x |- _ =>
+  | H : evaln _ ('I @ omega) ?x |- _ =>
       apply evaln_eval in H;
       pose proof (eval_deterministic _ _ H _ I_omega); subst x; clear H
   end.
@@ -63,6 +61,32 @@ Local Opaque type_app infer equal equal1 get_tagname.
 Local Opaque abstract_case default_body type_app_stem type_app_S
   triage_case get_name_test.
 
+(** The clause for [S2[G,F]] runs [type_app_S], at no greater height. *)
+Lemma default_S_evaln : forall (AI : Decl) rec G F w m,
+  evaln m (default_body AI @ rec @r ('S2[G,F])) w ->
+  evaln m (type_app_S @ rec @r G @r F) w.
+Proof.
+  intros AI rec G F w m Hw.
+  pose proof (default_S_head_inv _ _ _ _ _ (evaln_eval _ _ _ Hw)) as HS.
+  Local Transparent default_body.
+  unfold default_body in Hw; invert_evaln.
+  Local Opaque default_body.
+  all: try (exfalso; match goal with
+  | H : evaln _ (get_tagged @ Sm _) (Sm _) |- _ =>
+    apply evaln_eval in H; destruct (get_tagged_success_inv _ _ H) as [? [? [HT _]]];
+    discriminate HT end).
+  all: match goal with
+  | HS0 : type_app_S @ ?r @r ?g @r ?f ==> ?w0,
+    H1 : evaln _ (type_app_S @ ?r) ?t, H2 : evaln _ (?t @ ?g) ?t1,
+    H3 : evaln _ (?t1 @ ?f) ?v |- _ =>
+    let E := fresh "E" in
+    assert (E : w0 = v) by (eapply eval_deterministic; [exact HS0|
+      eapply eval_appl; [eapply eval_appl; [exact (evaln_eval _ _ _ H1)|
+        exact (evaln_eval _ _ _ H2)]|exact (evaln_eval _ _ _ H3)]]);
+    try rewrite E; evaln_close
+  end.
+Qed.
+
 (** Height-indexed inversion of the S clause for an arbitrary result [R],
     given that both component applications succeed. *)
 Lemma default_S_evaln_any : forall (AI : Decl) rec G F U w m VG VF R,
@@ -71,27 +95,7 @@ Lemma default_S_evaln_any : forall (AI : Decl) rec G F U w m VG VF R,
   evaln m (rec @ VG @r VF) R.
 Proof.
   intros AI rec G F U w m VG VF R Hw H HG HF.
-  assert (HT : evaln m (type_app_S @ rec @r G @r F) w).
-  { pose proof (default_S_head_inv _ _ _ _ _ (evaln_eval _ _ _ Hw)) as HS.
-    clear H.
-    Local Transparent default_body.
-    unfold default_body in Hw; invert_evaln.
-    Local Opaque default_body.
-    all: try (exfalso; match goal with
-    | H : evaln _ (get_tagged @ Sm _) (Sm _) |- _ =>
-      apply evaln_eval in H; destruct (get_tagged_success_inv _ _ H) as [? [? [HT _]]];
-      discriminate HT end).
-    all: match goal with
-    | HS0 : type_app_S @ ?r @r ?g @r ?f ==> ?w0,
-      H1 : evaln _ (type_app_S @ ?r) ?t, H2 : evaln _ (?t @ ?g) ?t1,
-      H3 : evaln _ (?t1 @ ?f) ?v |- _ =>
-      let E := fresh "E" in
-      assert (E : w0 = v) by (eapply eval_deterministic; [exact HS0|
-        eapply eval_appl; [eapply eval_appl; [exact (evaln_eval _ _ _ H1)|
-          exact (evaln_eval _ _ _ H2)]|exact (evaln_eval _ _ _ H3)]]);
-      try rewrite E; evaln_close
-    end. }
-  clear Hw.
+  apply default_S_evaln in Hw as HT; clear Hw.
   Local Transparent type_app_S.
   unfold type_app_S in HT; cbn in HT.
   invert_evaln.
@@ -136,30 +140,21 @@ Proof.
   exact (IH m Hm R Hm').
 Qed.
 
-(** ** The typing of the expression omega @ omega has no value
+(** ** The typing of omega @ omega has no value
 
-    As an expression, [omega @ omega] is [Fk (Sm omega) (Sm omega)]: the
-    application of the quoted value [omega] to itself. *)
+    Typing an application infers the types of its values and applies the
+    first to the second.  Both inferences succeed here, and the type
+    application never returns: the typing computation has no result at all,
+    which is stronger than [omega @ omega] having no type. *)
 
-Lemma expression_success2_type_app_any_inv : forall AI T1 T2 R,
-  expression_success2_type_app AI @ Sm T1 @r Sm T2 ==> R ->
-  type_app AI @ T1 @r T2 ==> R.
+Lemma infer_expression_omega_omega_no_value : forall (AI : Decl) F U R,
+  infer AI @ omega ==> Sm F -> infer AI @ omega ==> Sm U ->
+  ~ (type_app AI @ F @r U ==> R).
 Proof.
-  intros AI T1 T2 R H.
-  unfold expression_success2_type_app in H; cbn in H; invert_eval.
-  eauto using eval_appl.
-Qed.
-
-Lemma infer_expression_omega_omega_no_value : forall (AI : Decl) R,
-  ~ (infer_expression AI @ (omega @ omega) ==> R).
-Proof.
-  intros AI R H.
-  destruct (infer_expression_fork_gen_inv AI _ _ _ H) as [a [b [Ha [Hb HR]]]].
-  apply infer_expression_stem_inv in Ha; apply infer_expression_stem_inv in Hb.
-  pose proof (eval_deterministic _ _ Ha _ (omega_self_typed AI)); subst a.
-  pose proof (eval_deterministic _ _ Hb _ (omega_self_typed AI)); subst b.
-  apply expression_success2_type_app_any_inv in HR.
-  exact (type_app_omega_no_value AI R HR).
+  intros AI F U R HF HU.
+  pose proof (eval_deterministic _ _ HF _ (omega_self_typed AI)) as E; inv_out E.
+  pose proof (eval_deterministic _ _ HU _ (omega_self_typed AI)) as E; inv_out E.
+  exact (type_app_omega_no_value AI R).
 Qed.
 
 (** ** The lambda program lam[omega, omega]
@@ -227,7 +222,7 @@ Lemma function_abstractor_decorate_any_inv : forall F U type_app0 r,
   exists V, type_app0 @ F @r U ==> V.
 Proof.
   intros F U type_app0 r H.
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hr]]; clear H.
+  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hr]]; clear H.
   unfold function_abstractor_core in Hw.
   destruct (check_function_direct_decorate F U) as [c Hc].
   destruct (extend_inv _ _ _ _ Hw)
@@ -373,19 +368,19 @@ Proof.
   exact (IH m Hm R Hm').
 Qed.
 
-(** ** The typing of Z I @ x has no value, whenever x is typed *)
+(** ** The typing of Z I @ x has no value, whenever x is typed
 
-Lemma infer_expression_truth_teller_no_value : forall (AI : Decl) x X R,
-  infer AI @ x ==> Sm X ->
-  ~ (infer_expression AI @ (truth_teller @ x) ==> R).
+    As for [omega @ omega], the statement is about the typing computation:
+    with the types of [Z I] and [x] inferred, their type application has
+    no result. *)
+
+Lemma infer_expression_truth_teller_no_value : forall (AI : Decl) x F X R,
+  infer AI @ truth_teller ==> Sm F -> infer AI @ x ==> Sm X ->
+  ~ (type_app AI @ F @r X ==> R).
 Proof.
-  intros AI x X R Hx H.
-  destruct (infer_expression_fork_gen_inv AI _ _ _ H) as [a [b [Ha [Hb HR]]]].
-  apply infer_expression_stem_inv in Ha; apply infer_expression_stem_inv in Hb.
-  pose proof (eval_deterministic _ _ Ha _ (truth_teller_self_typed AI)); subst a.
-  pose proof (eval_deterministic _ _ Hb _ Hx); subst b.
-  apply expression_success2_type_app_any_inv in HR.
-  exact (type_app_truth_teller_no_value AI X R HR).
+  intros AI x F X R HF _.
+  pose proof (eval_deterministic _ _ HF _ (truth_teller_self_typed AI)) as E; inv_out E.
+  exact (type_app_truth_teller_no_value AI X R).
 Qed.
 
 (** ** Concrete dither: its typing has no value either
@@ -400,27 +395,7 @@ Lemma default_S_evaln_right : forall (AI : Decl) rec G F U w m VG R,
   exists k R', k <= m /\ evaln k (rec @ F @r U) R'.
 Proof.
   intros AI rec G F U w m VG R Hw H HG.
-  assert (HT : evaln m (type_app_S @ rec @r G @r F) w).
-  { pose proof (default_S_head_inv _ _ _ _ _ (evaln_eval _ _ _ Hw)) as HS.
-    clear H.
-    Local Transparent default_body.
-    unfold default_body in Hw; invert_evaln.
-    Local Opaque default_body.
-    all: try (exfalso; match goal with
-    | H : evaln _ (get_tagged @ Sm _) (Sm _) |- _ =>
-      apply evaln_eval in H; destruct (get_tagged_success_inv _ _ H) as [? [? [HT _]]];
-      discriminate HT end).
-    all: match goal with
-    | HS0 : type_app_S @ ?r @r ?g @r ?f ==> ?w0,
-      H1 : evaln _ (type_app_S @ ?r) ?t, H2 : evaln _ (?t @ ?g) ?t1,
-      H3 : evaln _ (?t1 @ ?f) ?v |- _ =>
-      let E := fresh "E" in
-      assert (E : w0 = v) by (eapply eval_deterministic; [exact HS0|
-        eapply eval_appl; [eapply eval_appl; [exact (evaln_eval _ _ _ H1)|
-          exact (evaln_eval _ _ _ H2)]|exact (evaln_eval _ _ _ H3)]]);
-      try rewrite E; evaln_close
-    end. }
-  clear Hw.
+  apply default_S_evaln in Hw as HT; clear Hw.
   Local Transparent type_app_S.
   unfold type_app_S in HT; cbn in HT.
   invert_evaln.
@@ -434,12 +409,12 @@ Proof.
         clear H2; first [discriminate E | injection E; intros; subst]
     end.
   all: match goal with
-    | |- exists _ _, _ /\ evaln _ (Fk ?e (Sm ?u0)) _ =>
+    | |- exists _ _, _ /\ evaln _ (?d @r ?u) _ =>
       match goal with
-      | H1 : evaln ?a e ?x, H2 : evaln ?b (Fk (Sm ?x) (Sm u0)) ?r |- _ =>
+      | H1 : evaln ?a d ?x, H2 : evaln ?b (?x @ u) ?r |- _ =>
         exists (S (Nat.max a b)), r; split;
-        [ lia | apply (evaln_appl_pred (S (Nat.max a b)) _ _ _ x r);
-          [ lia | apply (evaln_lt a _ _ _ H1); cbn; lia | apply (evaln_lt b _ _ _ H2); cbn; lia ] ]
+        [ lia | apply (evaln_appl (Nat.max a b) _ _ x r);
+          [ apply (evaln_lt a _ _ _ H1); lia | apply (evaln_lt b _ _ _ H2); lia ] ]
       end
     end.
   Local Opaque type_app_S.
@@ -496,17 +471,17 @@ Proof.
 Qed.
 Lemma cdither_self_typed : forall AI, infer AI @ cdither ==> Sm cdither.
 Proof. intros; apply concrete_is_self_typed, cdither_concrete. Qed.
-Theorem infer_expression_cdither_no_value : forall (AI : Decl) x X R,
-  infer AI @ x ==> Sm X ->
-  ~ (infer_expression AI @ (cdither @ x) ==> R).
+(** If [x] has a type, the typing of [cdither @ x] has no value.
+    Typing the application infers the types of [cdither] and [x], which
+    succeeds, and applies the first to the second, which never returns.
+    So the typing computation has no result, not merely a failing one. *)
+Theorem infer_expression_cdither_no_value : forall (AI : Decl) x C X R,
+  infer AI @ cdither ==> Sm C -> infer AI @ x ==> Sm X ->
+  ~ (type_app AI @ C @r X ==> R).
 Proof.
-  intros AI x X R Hx H.
-  destruct (infer_expression_fork_gen_inv AI _ _ _ H) as [a [b [Ha [Hb HR]]]].
-  apply infer_expression_stem_inv in Ha; apply infer_expression_stem_inv in Hb.
-  pose proof (eval_deterministic _ _ Ha _ (cdither_self_typed AI)); subst a.
-  pose proof (eval_deterministic _ _ Hb _ Hx); subst b.
-  apply expression_success2_type_app_any_inv in HR.
-  exact (type_app_cdither_no_value AI X R HR).
+  intros AI x C X R HC _.
+  pose proof (eval_deterministic _ _ HC _ (cdither_self_typed AI)) as E; inv_out E.
+  exact (type_app_cdither_no_value AI X R).
 Qed.
 
 (** ** Plain [Z] dither on [Bool]

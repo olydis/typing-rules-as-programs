@@ -4,7 +4,7 @@
     - clause notation for writing the typing programs;
     - the hardwired auxiliary programs;
     - type application [type_app];
-    - inference of value types and of expression types;
+    - inference of value types, and the typing of applications;
     - the paper's type-application figure, type application clause by clause. *)
 
 
@@ -259,7 +259,7 @@ Lemma ignores_wait_eval : forall e X a U v,
   e @ X @r U ==> v -> 'wait[ignores e, X] @ a @r U ==> v.
 Proof.
   intros e X a U v H.
-  destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hv]]]]; inv_out Hu.
+  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]].
   eapply eval_appl; [apply wait_eval; unfold ignores; repeat first [eassumption | progress evaluate]|exact Hv].
 Qed.
 
@@ -267,7 +267,7 @@ Lemma ignores_wait_inv : forall e X a U v,
   'wait[ignores e, X] @ a @r U ==> v -> e @ X @r U ==> v.
 Proof.
   intros e X a U v H.
-  destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hv]]]]; inv_out Hu.
+  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]].
   apply wait_eval_inv in Hw; unfold ignores in Hw; invert_eval.
   eapply eval_appl; eassumption.
 Qed.
@@ -451,7 +451,7 @@ Lemma path_eval : forall ds t, path_prog ds @ t ==> path_fn ds t.
 Proof.
   induction ds as [|d ds IH]; intro t; cbn [path_prog path_fn].
   - apply I_eval.
-  - apply eval_c; eapply eval_arg_value; [apply dir_eval | apply IH].
+  - eapply eval_c; [apply dir_eval | apply IH].
 Qed.
 
 
@@ -636,7 +636,7 @@ Definition function_abstractor := Eval cbn -[function_abstractor_core] in
 Lemma function_abstractor_eval : forall a C v,
   function_abstractor_core @ C @r a ==> v -> function_abstractor @ a @r C ==> v.
 Proof.
-  intros a C v H; destruct (eval_pair_inv _ _ _ H) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  intros a C v H; destruct (eval_appl_inv _ _ _ H) as [w [Hw Hw2]].
   unfold function_abstractor; repeat first [eassumption | progress evaluate].
 Qed.
 
@@ -668,8 +668,8 @@ Lemma declaration_K1_inv : forall AI N D a C v,
   AI @ N ==> ('K1 D) -> AI @ N @r a @r C ==> v -> D @ C ==> v.
 Proof.
   intros AI N D a C v HD H.
-  destruct (eval_pair_inv _ _ _ H) as [D' [c [HD' [Hc Hv]]]]; inv_out Hc.
-  destruct (eval_pair_inv _ _ _ HD') as [R [c' [HR [Hc' Ha]]]]; inv_out Hc'.
+  destruct (eval_appl_inv _ _ _ H) as [D' [HD' Hv]].
+  destruct (eval_appl_inv _ _ _ HD') as [R [HR Ha]].
   pose proof (eval_deterministic _ _ HR _ HD) as ->.
   pose proof (eval_deterministic _ _ Ha _ (eval_k _ _)) as ->; exact Hv.
 Qed.
@@ -677,8 +677,8 @@ Qed.
 Lemma declaration_apply_inv : forall AI N a C v,
   AI @ N @r a @r C ==> v -> exists R D, AI @ N ==> R /\ R @ a ==> D /\ D @ C ==> v.
 Proof.
-  intros AI N a C v H; destruct (eval_pair_inv _ _ _ H) as [D [c [HD [Hc Hv]]]]; inv_out Hc.
-  destruct (eval_pair_inv _ _ _ HD) as [R [c' [HR [Hc' Ha]]]]; inv_out Hc'.
+  intros AI N a C v H; destruct (eval_appl_inv _ _ _ H) as [D [HD Hv]].
+  destruct (eval_appl_inv _ _ _ HD) as [R [HR Ha]].
   exists R, D; repeat split; assumption.
 Qed.
 
@@ -703,7 +703,7 @@ Lemma check_function_direct_some_inv : forall C continuation,
 Proof.
   intros C continuation H; unfold check_function_direct in H; cbn in H.
   invert_eval; eauto.
-  apply get_decorate_inv in H4; eauto.
+  match goal with H : get_decorate @ _ ==> _ |- _ => apply get_decorate_inv in H end; eauto.
 Qed.
 
 Lemma check_function_direct_eval_inv :
@@ -717,10 +717,9 @@ Proof.
   intros type_app0 F U continuation E H Happly.
   unfold check_function_direct in H; cbn in H.
   invert_eval; eauto.
-  apply get_decorate_inv in H4; inversion H4; subst v5 v3.
-  exists v4; split.
-  - eapply eval_appl; eauto.
-  - reflexivity.
+  match goal with H : get_decorate @ _ ==> _ |- _ =>
+    apply get_decorate_inv in H; inversion H; subst end.
+  eexists; split; [eapply eval_appl; eauto | reflexivity].
 Qed.
 
 Lemma get_tagged_success_inv : forall T P,
@@ -937,7 +936,7 @@ Lemma function_declared : forall (AI : Decl) app C E,
 Proof.
   intros AI app C E H.
   pose proof (function_abstractor_eval app C E H) as Hf.
-  destruct (eval_pair_inv _ _ _ Hf) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ Hf) as [w [Hw Hw2]].
   repeat (eapply eval_appl; [|eassumption]); exact (functions_declared AI).
 Qed.
 
@@ -946,8 +945,8 @@ Lemma function_row_inv : forall AI app C r,
   AI @ fun_nm @r app @r C ==> r -> function_abstractor_core @ C @r app ==> r.
 Proof.
   intros AI app C r HF H.
-  destruct (eval_pair_inv _ _ _ H) as [D [c [HD [Hc Hv]]]]; inv_out Hc.
-  destruct (eval_pair_inv _ _ _ HD) as [R [c' [HR [Hc' Ha]]]]; inv_out Hc'.
+  destruct (eval_appl_inv _ _ _ H) as [D [HD Hv]].
+  destruct (eval_appl_inv _ _ _ HD) as [R [HR Ha]].
   pose proof (eval_deterministic _ _ HR _ HF) as ->.
   apply function_abstractor_eval_inv; eapply eval_appl; eassumption.
 Qed.
@@ -999,7 +998,7 @@ Lemma payload_eliminator_inv : forall A a X V,
   payload_eliminator A @ a @r X ==> V -> a @ X @r A ==> V.
 Proof.
   intros A a X V H; destruct (payload_eliminator_head A a) as [w [Hw Hi]].
-  destruct (eval_pair_inv _ _ _ H) as [w' [u [Hw' [Hu Hv]]]]; inv_out Hu.
+  destruct (eval_appl_inv _ _ _ H) as [w' [Hw' Hv]].
   pose proof (eval_deterministic _ _ Hw' _ Hw) as ->; apply Hi; exact Hv.
 Qed.
 
@@ -1087,14 +1086,6 @@ Definition type_app_S := Eval cbv in to_tree <{
   fun "rec" "G" "F" "U" =>
     let Sm "V" = "G" # "U" in let Sm "W" = "F" # "U" in "V" # "W" }>.
 End TypeAppSClause.
-
-
-Lemma eval_app_r_inv : forall e x v,
-  Fk e (Sm x) ==> v -> exists w, e ==> w /\ w @ x ==> v.
-Proof.
-  intros e x v H; destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hv]]]].
-  inversion Hu; subst u; eauto.
-Qed.
 
 
 Local Transparent equal1.
@@ -1217,7 +1208,7 @@ Proof.
 Qed.
 
 Local Ltac split_apps_local :=
-  repeat match goal with H : Fk (Fk ?a ?b) ?c ==> _ |- _ => inv_out H end.
+  repeat match goal with H : _ @r _ ==> _ |- _ => inv_out H end.
 Local Ltac run_check :=
   first [eassumption | apply equal_eval | apply equal1_eq |
     evaluate_expr_core run_check run_check_head | idtac]
@@ -1364,7 +1355,7 @@ Ltac name_failure := apply get_name_test_none;
 Local Ltac run := first [eassumption|apply equal_eval|apply equal1_eq|
  evaluate_expr_core run run_head|idtac]
 with run_head := first [eassumption|apply equal_eval|apply equal1_eq|evaluate_head_core run|idtac].
-Local Ltac split_apps := repeat match goal with H : Fk (Fk ?a ?b) ?c ==> _ |- _ => inv_out H end.
+Local Ltac split_apps := repeat match goal with H : _ @r _ ==> _ |- _ => inv_out H end.
 Local Opaque payload_eliminator.
 (** ** Wrapper lookup *)
 (** The abstractor of the wrapper with payload program [p]: when
@@ -1515,7 +1506,7 @@ Lemma default_stem : forall AI rec G v,
   type_app_stem AI @ rec @r G ==> v -> default_body AI @ rec @r Sm G ==> v.
 Proof.
   intros AI rec G v H.
-  destruct (eval_app_r_inv _ _ _ H) as [s [Hs Hv]].
+  destruct (eval_appl_inv _ _ _ H) as [s [Hs Hv]].
   assert (Ht : exists t, type_app_S @ rec ==> t)
     by (eexists; unfold type_app_S; cbn; evaluate).
   destruct Ht as [t Ht].
@@ -1535,8 +1526,8 @@ Lemma default_S : forall AI rec G H v,
 Proof.
   intros AI rec G H v Hv.
   destruct (type_app_stem_head AI rec) as [s Hs].
-  destruct (eval_app_r_inv _ _ _ Hv) as [t1 [Ht1 Hv1]].
-  destruct (eval_app_r_inv _ _ _ Ht1) as [t [Ht Ht2]].
+  destruct (eval_appl_inv _ _ _ Hv) as [t1 [Ht1 Hv1]].
+  destruct (eval_appl_inv _ _ _ Ht1) as [t [Ht Ht2]].
   pose proof (get_tagged_none (Sm G) ltac:(intros; discriminate)) as HG.
   unfold default_body, extend_program; ord_run.
 Qed.
@@ -1545,7 +1536,7 @@ Lemma default_S_app : forall AI rec G H U R,
   type_app_S @ rec @r G @r H @r U ==> R -> default_body AI @ rec @r ('S2[G,H]) @r U ==> R.
 Proof.
   intros AI rec G H U R HR.
-  destruct (eval_app_r_inv _ _ _ HR) as [w [Hw HR']].
+  destruct (eval_appl_inv _ _ _ HR) as [w [Hw HR']].
   eapply eval_appl; [apply default_S; exact Hw|exact HR'].
 Qed.
 
@@ -1686,7 +1677,7 @@ Lemma default_head : forall AI rec,
   exists d, default_body AI @ rec ==> d /\ d @ Lf ==> type_app_leaf.
 Proof.
   intros AI rec.
-  destruct (eval_app_r_inv _ _ _ (default_leaf AI rec)) as [d [Hd H]]; eauto.
+  destruct (eval_appl_inv _ _ _ (default_leaf AI rec)) as [d [Hd H]]; eauto.
 Qed.
 
 (** Forward: off the F-level clause, [body] is the ordinary clauses. *)
@@ -1697,7 +1688,7 @@ Proof.
   intros AI rec F w HA0 HG H.
   pose proof (wait_abstract_wait_none rec F HA0) as HA.
   destruct (default_head AI rec) as [d [Hd HL]].
-  destruct (eval_app_r_inv _ _ _ H) as [d' [Hd' Hw]].
+  destruct (eval_appl_inv _ _ _ H) as [d' [Hd' Hw]].
   rewrite (eval_deterministic _ _ Hd' _ Hd) in Hw; clear Hd'.
   destruct F as [|G|X Y].
   - rewrite (eval_deterministic _ _ Hw _ HL); clear Hw.
@@ -1752,7 +1743,7 @@ Proof.
   intros AI rec F w HA0 H.
   pose proof (wait_abstract_wait_none rec F HA0) as HA.
   destruct (default_head AI rec) as [d [Hd HL]].
-  destruct (eval_app_r_inv _ _ _ H) as [d' [Hd' Hw]].
+  destruct (eval_appl_inv _ _ _ H) as [d' [Hd' Hw]].
   rewrite (eval_deterministic _ _ Hd' _ Hd) in Hw; clear Hd'.
   destruct F as [|G|X Y].
   - rewrite (eval_deterministic _ _ Hw _ HL); clear Hw.
@@ -1767,7 +1758,7 @@ Lemma default_application : forall AI F U R,
  default_body AI @ app AI @r F @r U ==> R -> app AI @ F @r U ==> R.
 Proof.
  intros AI F U R HA HG HC.
- destruct (eval_app_r_inv _ _ _ HC) as [w [Hw HR]].
+ destruct (eval_appl_inv _ _ _ HC) as [w [Hw HR]].
  eapply eval_appl; [apply Z_unfold; apply body_default; eassumption|exact HR].
 Qed.
 
@@ -1803,7 +1794,7 @@ Proof.
  intros AI F U R H;apply default_application.
  - apply abstract_case_plain;intros;discriminate.
  - apply get_name_test_stem.
- - destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+ - destruct (eval_appl_inv _ _ _ H) as [w [Hw HR]].
    eapply eval_appl;[apply default_stem;exact Hw|exact HR].
 Qed.
 
@@ -1873,7 +1864,7 @@ Lemma default_triage : forall AI rec F0 F1 F2 U R,
   default_body AI @ rec @r 'triage[F0,F1,F2] @r U ==> R.
 Proof.
   intros AI rec F0 F1 F2 U R H.
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+  destruct (eval_appl_inv _ _ _ H) as [w [Hw HR]].
   eapply eval_appl; [apply (proj2 (default_triage_iff AI rec F0 F1 F2 w)); exact Hw|exact HR].
 Qed.
 
@@ -1940,7 +1931,7 @@ Lemma app_stem_inv : forall AI F U R,
   type_app_stem AI @ app AI @r F @r U ==> R.
 Proof.
   intros AI F U R H.
-  destruct (eval_app_r_inv _ _ _ H) as [s [Hs Ha]].
+  destruct (eval_appl_inv _ _ _ H) as [s [Hs Ha]].
   pose proof (Z_unfold_inv _ _ _ Hs) as Hb.
   destruct (body_inv _ _ _ _ Hb) as [[E [N [HE _]]]|[_ HD]].
   - discriminate.
@@ -2098,7 +2089,7 @@ Lemma app_abstract_inv : forall AI E N U R,
  app AI @ 'tagged[E,N] @r U ==> R -> E @ app AI @r U ==> R.
 Proof.
  intros AI E N U R H.
- destruct (eval_app_r_inv _ _ _ H) as [f [Hf Hr]].
+ destruct (eval_appl_inv _ _ _ H) as [f [Hf Hr]].
  pose proof (eval_deterministic _ _ Hf _ (app_abstract_head AI E N)) as ->.
  apply wait_eval_inv; exact Hr.
 Qed.
@@ -2110,7 +2101,7 @@ Lemma app_plain_inv : forall AI C U V,
  default_body AI @ app AI @r C @r U ==> Sm V.
 Proof.
  intros AI C U V HA H.
- destruct (eval_app_r_inv _ _ _ H) as [s [Hs Ha]].
+ destruct (eval_appl_inv _ _ _ H) as [s [Hs Ha]].
  pose proof (Z_unfold_inv _ _ _ Hs) as Hb; clear H Hs.
  destruct (body_inv _ _ _ _ Hb) as [[E [N [-> ->]]]|[_ HD]].
  - pose proof (eval_deterministic _ _ HA _ (abstract_case_tagged E N)); discriminate.
@@ -2127,7 +2118,7 @@ Lemma default_triage_inv : forall AI rec F0 F1 F2 U V,
  triage_case @ rec @r F0 @r F1 @r F2 @r U ==> Sm V.
 Proof.
  intros AI rec F0 F1 F2 U V H.
- destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+ destruct (eval_appl_inv _ _ _ H) as [w [Hw HR]].
  eapply eval_appl; [apply (proj1 (default_triage_iff AI rec F0 F1 F2 w)); exact Hw|exact HR].
 Qed.
 
@@ -2137,7 +2128,7 @@ Lemma triage_case_inv : forall rec F0 F1 F2 U V,
  structural_triage rec F0 F1 F2 @ U ==> Sm V.
 Proof.
  intros rec F0 F1 F2 U V H.
- destruct (eval_pair_inv _ _ _ H) as [h [u [HH [HU HR]]]]; inversion HU; subst u; clear HU.
+ destruct (eval_appl_inv _ _ _ H) as [h [HH HR]].
  destruct (triage_case_head _ _ _ _ _ HH)
    as [[[E [N HE]] ->]|[HP ->]].
  - exfalso; exact (error_triage_not_some _ _ HR).
@@ -2202,9 +2193,9 @@ Lemma default_S_inv : forall AI rec G F U V,
    rec @ F @r U ==> Sm VF /\ rec @ VG @r VF ==> Sm V.
 Proof.
  intros AI rec G F U V H.
- destruct (eval_app_r_inv _ _ _ H) as [w [Hw HR]].
+ destruct (eval_appl_inv _ _ _ H) as [w [Hw HR]].
  apply default_S_head_inv in Hw.
- pose proof (eval_appl _ _ _ _ _ Hw HR) as H'; clear H Hw HR.
+ pose proof (eval_appl _ _ _ _ Hw HR) as H'; clear H Hw HR.
  Local Transparent type_app_S.
  unfold type_app_S in H'; cbn in H'; invert_eval.
  Local Opaque type_app_S.
@@ -2266,11 +2257,11 @@ Proof.
   Local Transparent structural_fork.
   destruct U as [|X|X Y]; unfold plain_triage.
   - evaluate.
-  - destruct (eval_app_r_inv _ _ _ (HQ X)) as [h [Hh HX]].
+  - destruct (eval_appl_inv _ _ _ (HQ X)) as [h [Hh HX]].
     repeat first [eassumption | apply wait_eval | progress evaluate].
   - pose proof (get_tagged_none _ HU) as HG.
-    destruct (eval_app_r_inv _ _ _ (HQQ X)) as [h1 [Hh1 HX1]].
-    destruct (eval_app_r_inv _ _ _ (HQ Y)) as [h2 [Hh2 HX2]].
+    destruct (eval_appl_inv _ _ _ (HQQ X)) as [h1 [Hh1 HX1]].
+    destruct (eval_appl_inv _ _ _ (HQ Y)) as [h2 [Hh2 HX2]].
     unfold structural_fork; repeat first [eassumption | apply wait_eval | progress evaluate].
   Local Opaque structural_fork.
 Qed.
@@ -2337,7 +2328,7 @@ Variable AI : Combination.
 Local Abbreviation type_app := (typing.type_app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 
-(** 2. Type inference for programs and expressions
+(** 2. Type inference for programs
     Soundness of type inference will require
     soundness of AI when typing tagged terms only. 
  *) 
@@ -2445,7 +2436,7 @@ Proof.
   1,3: repeat first [eassumption|progress evaluate].
   destruct b as [|U2|b1 b2]; [subst R| |subst R].
   1,3: repeat first [eassumption|progress evaluate].
-  destruct (eval_app_r_inv _ _ _ HR) as [f' [Hf' HR']]; clear Hf.
+  destruct (eval_appl_inv _ _ _ HR) as [f' [Hf' HR']]; clear Hf.
   repeat first [eassumption|progress evaluate].
 Qed.
 
@@ -2484,9 +2475,7 @@ Lemma infer_stem_inv :
     exists U, T = Sm U /\ infer @ u ==> Sm U.
 Proof.
   intros u T H.
-  assert (infer_body @ infer @r Sm u ==> Sm T)
-    by (eapply Z_unfold_inv; exact H).
-  invert_eval; inv_out H5; invert_eval; evaluate; eauto.
+  apply Z_unfold_inv in H; unfold infer_body in H; invert_eval.
 Qed.
 
 Lemma infer_fork_inv :
@@ -3214,154 +3203,54 @@ From Stdlib Require Import String.
 Open Scope string_scope.
 Set Default Proof Using "Type".
 Local Opaque app inf type_app_stem.
-Section Expressions.
+(** * Typing applications
+
+    The type of an application is type application of the types of the
+    values it applies: [f @ u] has type [T] when [f : F], [u : U] and
+    [F # U ==> Sm T], and [d @r u] has type [T] when [d] has type [D],
+    [u : U] and [D # U ==> Sm T]. *)
+Inductive has_type (AI : Combination) : Application -> Combination -> Prop :=
+| has_type_ap : forall f u F U T,
+    inf AI @ f ==> Sm F -> inf AI @ u ==> Sm U -> app AI @ F @r U ==> Sm T ->
+    has_type AI (f @ u) T
+| has_type_apr : forall d u D U T,
+    has_type AI d D -> inf AI @ u ==> Sm U -> app AI @ D @r U ==> Sm T ->
+    has_type AI (d @r u) T.
+
+Lemma has_type_ap_inv : forall AI f u T, has_type AI (f @ u) T ->
+  exists F U, inf AI @ f ==> Sm F /\ inf AI @ u ==> Sm U /\ app AI @ F @r U ==> Sm T.
+Proof. intros AI f u T H; inv_out H; eauto 6. Qed.
+
+(** Type an application by the rule that matches its shape. *)
+Ltac has_type_intro := first [ eapply has_type_ap | eapply has_type_apr ].
+
+Lemma has_type_apr_inv : forall AI d u T, has_type AI (d @r u) T ->
+  exists D U, has_type AI d D /\ inf AI @ u ==> Sm U /\ app AI @ D @r U ==> Sm T.
+Proof. intros AI d u T H; inv_out H; eauto 6. Qed.
+
+Section ApplicationTyping.
 Variable AI : Combination.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 Local Abbreviation infer := (inf AI).
 Local Abbreviation type_app_stem_inv := (typing.app_stem_inv AI).
-Local Notation "x # y" := (Val type_app @@ x @@ y)
-  (in custom clause at level 20, left associativity).
-(** let Sm T1 = _ and Sm T2 = _ in T1 # T2, as a function of the two
-    results ([success2] compiled in place). *)
-Definition expression_success2_type_app_package :
-  { t : Combination |
-    to_tree <{ fun Sm "T1" , Sm "T2" => "T1" # "T2" }> = t }.
-Proof. eexists; simpl; reflexivity. Defined.
-
-Definition expression_success2_type_app :=
-  Eval cbn in proj1_sig
-    expression_success2_type_app_package.
-
-(** infer_expression = | Lf       => Lf
-                       | Sm u     => infer @ u
-                       | Fk e1 e2 => let Sm T1 = infer_expression @ e1 in
-                                     let Sm T2 = infer_expression @ e2 in T1 # T2
-    As compiled, both subexpressions are inferred before either result is
-    tested ([star] lifts the T1-free [infer_expression @ e2]); then
-    [type_app @ T1] is formed and, if T2 is a success, applied to T2. *)
-Definition infer_expression_body_package :
-  { t | to_tree <{
-      fun "infer_expression" =>
-        shape
-        | Lf => Lf
-        | Sm "u" => infer @ "u"
-        | Fk "e1" "e2" =>
-            let Sm "T1" = "infer_expression" @ "e1" in
-            let Sm "T2" = "infer_expression" @ "e2" in "T1" # "T2"
-        end }> = t}.
-Proof.  eexists; simpl; reflexivity.  Defined. 
-
- Definition infer_expression_body :=
-  Eval cbn in proj1_sig infer_expression_body_package.
-
-Definition infer_expression := 
-  Z infer_expression_body.
-
-
 Local Notation "F # U" := (type_app @ F @r U)
                       (at level 45, left associativity).
 
-
-(** type inference for expressions *)
-
-Lemma infer_expression_leaf : infer_expression @ Lf ==> Lf.
-Proof. unfold infer_expression; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
-
-Lemma infer_expression_stem :
-  forall u T,
-    infer @ u ==> Sm T ->
-    infer_expression @ Sm u ==> Sm T.
-Proof. intros u T Hu; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
-
-Lemma infer_expression_fork :
-  forall e1 e2 T1 T2 R,
-    infer_expression @ e1 ==> Sm T1 ->
-    infer_expression @ e2 ==> Sm T2 ->
-    type_app @ T1 @r T2 ==> R ->
-    infer_expression @ Fk e1 e2 ==> R.
-Proof. intros; invert_eval; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
-
-Local Lemma expression_success2_type_app_inv :
-  forall v1 v2 T,
-    expression_success2_type_app @ v1 @r v2 ==> Sm T ->
-    exists T1 T2,
-      v1 = Sm T1 /\
-      v2 = Sm T2 /\
-      type_app @ T1 @r T2 ==> Sm T.
+(** Typing of [K] fork elimination. *)
+Lemma K_typing :
+  forall a u F U T,
+    infer @ ('K1 a) ==> Sm F -> infer @ u ==> Sm U -> F # U ==> Sm T ->
+    infer @ a ==> Sm T.
 Proof.
-  intros v1 v2 T H.
-  destruct v1 as [|T1|v11 v12];
-    destruct v2 as [|T2|v21 v22];
-    try (unfold expression_success2_type_app in H; cbn in H; invert_eval).
-  exists T1, T2; repeat split; try reflexivity.
-  evaluate.
-Qed.
-
-Lemma infer_expression_fork_gen_inv : forall e1 e2 R,
-  infer_expression @ Fk e1 e2 ==> R ->
-  exists a b, infer_expression @ e1 ==> a /\ infer_expression @ e2 ==> b /\
-    expression_success2_type_app @ a @r b ==> R.
-Proof.
-  intros e1 e2 R H; apply Z_unfold_inv in H; unfold infer_expression_body in H; invert_eval.
-  all: do 2 eexists; split; [eauto using eval_appl|split; [eauto using eval_appl|]].
-  all: unfold expression_success2_type_app; cbn; repeat first [eassumption|progress evaluate].
-Qed.
-
-
-Lemma infer_expression_stem_inv :
-  forall u T,
-    infer_expression @ Sm u ==> T ->
-    infer @ u ==> T.
-Proof.
-  intros u T H.
-  assert (infer_expression_body @ infer_expression @r Sm u ==> T)
-    by (eapply Z_unfold_inv; exact H).
-  inv_out H0; inv_out H5; invert_eval.
-Qed.
-
-Lemma infer_expression_fork_inv :
-  forall e1 e2 T,
-    infer_expression @ Fk e1 e2 ==> Sm T ->
-    exists T1 T2,
-      infer_expression @ e1 ==> Sm T1 /\
-      infer_expression @ e2 ==> Sm T2 /\
-      type_app @ T1 @r T2 ==> Sm T.
-Proof.
-  intros e1 e2 T H.
-  destruct (infer_expression_fork_gen_inv _ _ _ H) as [v2 [v4 [H1 [H2 Hsuccess]]]].
-  destruct (expression_success2_type_app_inv _ _ _ Hsuccess)
-    as [T1 [T2 [-> [-> Htype_app]]]].
-  exists T1, T2; repeat split; auto.
-Qed.
-
-(** Immediate reduct typing for [K] fork elimination. *)
-Lemma K_redex_typing :
-  forall v1 v2 T,
-    infer_expression @ (('K1 v1) @ v2) ==> Sm T ->
-    infer @ v1 ==> Sm T.
-Proof.
-  intros v1 v2 T Htyping.
-  destruct (infer_expression_fork_inv _ _ _ Htyping)
-    as [function_ty [argument_ty
-      [Hfunction_expr [Hargument_expr Hfinal_app]]]].
-  pose proof
-    (infer_expression_stem_inv _ _ Hfunction_expr) as Hfunction.
-  destruct (infer_fork_inv _ _ _ _ Hfunction)
-    as [leaf_ty [v1_ty [Hleaf [Hv1 Hconstructor_app]]]].
-  pose proof
-      (eval_deterministic _ _ Hleaf _ (inf_leaf AI)) as Hleaf_ty.
-  inversion Hleaf_ty; subst leaf_ty.
-  assert(type_app_stem @ type_app @r Lf @r v1_ty ==> Sm function_ty).
-  eapply type_app_stem_inv; eauto.
-  assert(type_app_stem @ type_app @r Lf @r v1_ty ==> Sm ('K1 v1_ty)) by
-    (eapply type_app_stem_structural; intros; discriminate).
-  assert(Sm function_ty = Sm ('K1 v1_ty)).
-  eapply eval_deterministic; eauto. inv_out H1.
-  assert(('K1 v1_ty) # argument_ty ==> Sm v1_ty)
-    by eapply typing.app_K.
-  assert(Sm T = Sm v1_ty) by (eapply eval_deterministic; eauto).
-  inv_out H2; auto.
+  intros a u F U T Hf Hu HT.
+  destruct (infer_fork_inv _ _ _ _ Hf) as [L [A [Hleaf [Ha Hc]]]].
+  pose proof (eval_deterministic _ _ Hleaf _ (inf_leaf AI)) as HL; inv_out HL.
+  apply type_app_stem_inv in Hc.
+  pose proof (type_app_stem_structural_inv AI type_app Lf A _
+    ltac:(intros; discriminate) Hc) as ->.
+  pose proof (eval_deterministic _ _ HT _ (app_K AI A U)) as HA; inv_out HA.
+  exact Ha.
 Qed.
 
 (** Once the inferred triage has query shape, inversion recovers the types
@@ -3415,31 +3304,7 @@ Proof.
   repeat split; assumption.
 Qed.
 
-
-Lemma infer_expression_program_tag_free : tag_free AI = true -> reserved_tagb (Lf 'C AI) = false ->
-  tag_free infer_expression = true.
-Proof.
-  Local Transparent inf app typing.type_app_stem.
-  intros HAI Hplain;
-  unfold infer_expression, infer_expression_body, expression_success2_type_app,
-    infer, infer_body, infer_fork_results, typing.type_app, app,
-    body, default_body, triage_case;
-  unfold type_app_stem;
-  vm_compute in HAI, Hplain |- *; repeat rewrite HAI; try rewrite Hplain; reflexivity.
-Local Opaque inf app typing.type_app_stem.
-Qed.
-
-
-Lemma infer_expression_self_typed : concrete AI ->
-  infer @ infer_expression ==> Sm infer_expression.
-Proof.
-  intros HL; apply infer_tag_free.
-  apply infer_expression_program_tag_free;
-    [apply concrete_tag_free; exact HL|apply concrete_ontology_plain; exact HL].
-Qed.
-
-
-End Expressions.
+End ApplicationTyping.
 
 
 Unset Default Proof Using.
@@ -3624,12 +3489,11 @@ Proof. intros; rewrite type_app_figure_body; reflexivity. Qed.
 
 End TypeAppFigure.
 
-(** * Value and expression inference, clause by clause as in the figure
+(** * Value inference, clause by clause as in the figure
 
-    The same check for the other two programs of the figure: written as
-    [match] on the argument with nested lets, they compile to the stored
-    bodies [infer_body] and [infer_expression_body].  [x # y] is the
-    stored type application, [type_app AI @ x @ y]. *)
+    The same check for inference: written as [match] on the argument with
+    nested lets, it compiles to the stored body [infer_body].  [x # y] is
+    the stored type application, [type_app AI @ x @ y]. *)
 Section InferFigures.
 Variable AI : Combination.
 Local Notation "x # y" := (Val (type_app AI) @@ x @@ y)
@@ -3653,17 +3517,4 @@ Definition infer_figure : Term := <{
 Lemma infer_figure_body : to_tree infer_figure = infer_body AI.
 Proof. reflexivity. Qed.
 
-Definition infer_expression_figure : Term := <{
-  fun "infer_expression" "e" => match "e" with
-  | Lf => Lf
-  | Sm "u" => {infer AI} @ "u"
-  | Fk "e1" "e2" =>
-      let Sm "T1" = "infer_expression" @ "e1" in
-      let Sm "T2" = "infer_expression" @ "e2" in "T1" # "T2"
-  end }>.
-
-(** The view compiles to the stored body of expression inference. *)
-Lemma infer_expression_figure_body :
-  to_tree infer_expression_figure = infer_expression_body AI.
-Proof. reflexivity. Qed.
 End InferFigures.

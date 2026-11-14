@@ -99,8 +99,7 @@ Lemma append_program_typed : forall (AI : Decl) d e A xs ys,
   supports_arrays AI -> infer AI @ d ==> Sm A -> infer AI @ e ==> Sm A ->
   Forall (fun x => infer AI @ x ==> Sm A) xs ->
   Forall (fun x => infer AI @ x ==> Sm A) ys ->
-  infer_expression AI @ (array_append @ (array_value d xs '* array_value e ys))
-    ==> Sm (Array A (sequence_index (xs ++ ys))).
+  has_type AI (array_append @ (array_value d xs '* array_value e ys)) (Array A (sequence_index (xs ++ ys))).
 Proof.
   intros; rewrite sequence_index_append; apply infer_array_append_application;
     auto using array_value_typed.
@@ -169,7 +168,7 @@ Qed.
 
     The final section abstracts the element witness too: take_array_program
     and read_array_program receive a witness by calculus application. It
-    may itself be computed, as demonstrated by generated_row_reader. The
+    may itself be computed, as the computed-witness examples show. The
     original specialised interfaces are retained, with exact correspondence
     lemmas. No additional abstract constructor or typing rule is needed. *)
 From Stdlib Require Import String List.
@@ -464,14 +463,13 @@ Qed.
 Lemma infer_take_array_application : forall b B n,
   supports_list AI -> supports_arrays AI ->
   infer AI @ b ==> Sm B -> unary_index n ->
-  infer_expression AI @ (take_array b @ n) ==>
-    Sm ('List[B] --> Array B n).
+  has_type AI (take_array b @ n) ('List[B] --> Array B n).
 Proof using AI.
   intros b B n HL HA Hb Hn.
   destruct (take_array_application b B HL HA Hb) as [G [HG Happ]].
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; exact HG.
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  has_type_intro.
+  - exact HG.
+  - apply infer_index; exact Hn.
   - apply Happ; exact Hn.
 Qed.
 
@@ -479,12 +477,12 @@ Lemma infer_take_array_list_application : forall b B n xs,
   supports_list AI -> supports_arrays AI ->
   infer AI @ b ==> Sm B -> unary_index n ->
   infer AI @ xs ==> Sm ('List[B]) ->
-  infer_expression AI @ (take_array b @ n @r xs) ==> Sm (Array B n).
+  has_type AI (take_array b @ n @r xs) (Array B n).
 Proof using AI.
   intros b B n xs HL HA Hb Hn Hxs.
-  eapply infer_expression_fork.
+  has_type_intro.
   - eapply infer_take_array_application; eassumption.
-  - apply infer_expression_stem; exact Hxs.
+  - exact Hxs.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 End GeneratorApplication.
@@ -585,12 +583,11 @@ Proof using AI HL.
 Qed.
 Lemma infer_collect_array_application : forall a A n,
   infer AI @ a ==> Sm A -> unary_index n ->
-  infer_expression AI @ (collect_array a @ n) ==>
-    Sm ('List[A] --> consumer_type A n ('List[A])).
+  has_type AI (collect_array a @ n) ('List[A] --> consumer_type A n ('List[A])).
 Proof using AI HL.
-  intros a A n Ha Hn; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply (infer_collect_array a A Ha).
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  intros a A n Ha Hn; has_type_intro.
+  - apply (infer_collect_array a A Ha).
+  - apply infer_index; exact Hn.
   - apply collect_array_application; assumption.
 Qed.
 End CollectorTyping.
@@ -684,22 +681,22 @@ Proof using AI HL HA.
 Defined.
 Lemma infer_read_array_application : forall a A n,
   infer AI @ a ==> Sm A -> unary_index n ->
-  infer_expression AI @ (read_array a @ n) ==> Sm (Array A n --> 'List[A]).
+  has_type AI (read_array a @ n) (Array A n --> 'List[A]).
 Proof using AI HL HA.
   intros a A n Ha Hn; destruct (infer_read_array a A Ha) as [R [HR HT]].
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; exact HR.
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  has_type_intro.
+  - exact HR.
+  - apply infer_index; exact Hn.
   - apply HT; exact Hn.
 Qed.
 Lemma infer_read_array_array : forall a A n xs,
   infer AI @ a ==> Sm A -> unary_index n ->
   infer AI @ xs ==> Sm (Array A n) ->
-  infer_expression AI @ (read_array a @ n @r xs) ==> Sm ('List[A]).
+  has_type AI (read_array a @ n @r xs) ('List[A]).
 Proof using AI HL HA.
-  intros a A n xs Ha Hn HX; eapply infer_expression_fork.
+  intros a A n xs Ha Hn HX; has_type_intro.
   - eapply infer_read_array_application; eassumption.
-  - apply infer_expression_stem; exact HX.
+  - exact HX.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 End ReaderTyping.
@@ -891,94 +888,63 @@ Proof using AI HL HA.
       repeat witness_app.
 Defined.
 
-(** These theorems type the witness-producing expression itself. *)
-Lemma infer_take_array_witness : forall e A n,
-  infer_expression AI @ e ==> Sm A -> unary_index n ->
-  infer_expression AI @ Fk (Fk (Sm take_array_program) e) (Sm n) ==>
-    Sm ('List[A] --> Array A n).
+(** These theorems type the program applied to its witness. *)
+Lemma infer_take_array_witness : forall a A n,
+  infer AI @ a ==> Sm A -> unary_index n ->
+  has_type AI (take_array_program @ a @r n) ('List[A] --> Array A n).
 Proof using AI HL HA.
-  intros e A n He Hn.
+  intros a A n He Hn.
   destruct infer_take_array_program as [T [HT HTA]].
   destruct (HTA A) as [G [HG HGn]].
-  eapply infer_expression_fork.
-  - eapply infer_expression_fork.
-    + apply infer_expression_stem; exact HT.
+  has_type_intro.
+  - has_type_intro.
+    + exact HT.
     + exact He.
     + exact HG.
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  - apply infer_index; exact Hn.
   - apply HGn; exact Hn.
 Qed.
-Lemma infer_read_array_witness : forall e A n,
-  infer_expression AI @ e ==> Sm A -> unary_index n ->
-  infer_expression AI @ Fk (Fk (Sm read_array_program) e) (Sm n) ==>
-    Sm (Array A n --> 'List[A]).
+Lemma infer_read_array_witness : forall a A n,
+  infer AI @ a ==> Sm A -> unary_index n ->
+  has_type AI (read_array_program @ a @r n) (Array A n --> 'List[A]).
 Proof using AI HL HA.
-  intros e A n He Hn.
+  intros a A n He Hn.
   destruct infer_read_array_program as [T [HT HTA]].
   destruct (HTA A) as [G [HG HGn]].
-  eapply infer_expression_fork.
-  - eapply infer_expression_fork.
-    + apply infer_expression_stem; exact HT.
+  has_type_intro.
+  - has_type_intro.
+    + exact HT.
     + exact He.
     + exact HG.
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  - apply infer_index; exact Hn.
   - apply HGn; exact Hn.
 Qed.
 
 Lemma infer_take_array_program_application : forall a A n xs,
   infer AI @ a ==> Sm A -> unary_index n -> infer AI @ xs ==> Sm ('List[A]) ->
-  infer_expression AI @ (take_array_program @ a @r n @r xs) ==> Sm (Array A n).
+  has_type AI (take_array_program @ a @r n @r xs) (Array A n).
 Proof using AI HL HA.
-  intros a A n xs Ha Hn HX; eapply infer_expression_fork.
-  - apply infer_take_array_witness; [apply infer_expression_stem; exact Ha|exact Hn].
-  - apply infer_expression_stem; exact HX.
+  intros a A n xs Ha Hn HX; has_type_intro.
+  - apply infer_take_array_witness; [exact Ha|exact Hn].
+  - exact HX.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 Lemma infer_read_array_program_application : forall a A n xs,
   infer AI @ a ==> Sm A -> unary_index n -> infer AI @ xs ==> Sm (Array A n) ->
-  infer_expression AI @ (read_array_program @ a @r n @r xs) ==> Sm ('List[A]).
+  has_type AI (read_array_program @ a @r n @r xs) ('List[A]).
 Proof using AI HL HA.
-  intros a A n xs Ha Hn HX; eapply infer_expression_fork.
-  - apply infer_read_array_witness; [apply infer_expression_stem; exact Ha|exact Hn].
-  - apply infer_expression_stem; exact HX.
+  intros a A n xs Ha Hn HX; has_type_intro.
+  - apply infer_read_array_witness; [exact Ha|exact Hn].
+  - exact HX.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 
-(** Construct a row witness, then supply it as the element witness for an
-    outer-array reader. Both dimensions are supplied as tree values. *)
-Definition generated_row_reader a m n :=
-  Fk (Fk (Sm read_array_program)
-    (take_array_program @ a @r n @r nil_value a)) (Sm m).
-Lemma infer_generated_row_reader : forall a A m n,
-  infer AI @ a ==> Sm A -> unary_index m -> unary_index n ->
-  infer_expression AI @ generated_row_reader a m n ==>
-    Sm (Array (Array A n) m --> 'List[Array A n]).
-Proof using AI HL HA.
-  intros a A m n Ha Hm Hn; unfold generated_row_reader.
-  apply infer_read_array_witness; [|exact Hm].
-  apply infer_take_array_program_application; [exact Ha|exact Hn|].
-  apply infer_nil_value; assumption.
-Qed.
 End WitnessTyping.
 
 Lemma take_array_program_list : forall b n d xs,
   take_array_program @ b @r n @r list_value d xs ==>
     array_value b (array_elements b n xs).
 Proof. intros; eapply eval_appl; [apply take_array_program_eval|apply array_builder_list]. Qed.
-Lemma generated_row_reader_eval : forall a m n,
-  generated_row_reader a m n ==>
-    array_reader (array_value a (array_elements a n List.nil)) m.
-Proof.
-  intros; unfold generated_row_reader; eapply eval_pair.
-  - eapply eval_pair.
-    + evaluate.
-    + apply (take_array_program_list a n a List.nil).
-    + apply read_array_specialises.
-  - evaluate.
-  - apply read_array_eval.
-Qed.
-
-
 (** Array mapping with a runtime tree index.
     map_array a b f n generates a function which reads its array, maps f
     over the resulting list and rebuilds an array with the same tree index.
@@ -1013,30 +979,26 @@ Proof.
     repeat first [eassumption | apply funty_eliminator_eval | progress type_app_tac].
 Qed.
 
-(** The mapper argument is an expression computing the list function, not
-    a Coq substitution of its output. Thus the theorem checks all runtime
-    applications, including the polymorphic list-map specialisation. *)
-Definition map_array_expression read build f b xs :=
-  Fk (Fk (map_via_lists @ read @r build) (map_with @ f @r b)) (Sm xs).
-
-Lemma infer_map_array_expression : forall (AI : Decl) read build f b xs A B F n,
+(** The mapper [m] is a value of the type of the list-map specialisation,
+    such as the value of [map_with @ f @r b]
+    ([infer_map_with_specialisation]).  Thus the theorem checks all runtime
+    applications of the mapper. *)
+Lemma infer_map_array_via_lists : forall (AI : Decl) read build m xs A B F n,
   supports_list AI ->
   infer AI @ read ==> Sm (Array A n --> 'List[A]) ->
   infer AI @ build ==> Sm ('List[B] --> Array B n) ->
-  infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> infer AI @ b ==> Sm B ->
+  type_app AI @ F @r A ==> Sm B ->
+  infer AI @ m ==> Sm (foldright_value (map_step_value F) ('List[B])) ->
   infer AI @ xs ==> Sm (Array A n) ->
-  infer_expression AI @ map_array_expression read build f b xs ==> Sm (Array B n).
+  has_type AI (map_via_lists @ read @r build @r m @r xs) (Array B n).
 Proof.
-  intros AI read build f b xs A B F n HL Hr Hw Hf HFA Hb Hxs.
+  intros AI read build m xs A B F n HL Hr Hw HFA Hm Hxs.
   destruct (type_app_map_via_lists AI A B n _ (type_app_map_value AI HL F A B HFA))
     as [T1 [T2 [T3 [HT1 [HT2 [HT3 HT4]]]]]].
-  unfold map_array_expression.
-  eapply infer_expression_fork; [|apply infer_expression_stem; exact Hxs|exact HT4].
-  eapply infer_expression_fork; [|apply infer_map_with_specialisation; eassumption|exact HT3].
-  eapply infer_expression_fork; [|apply infer_expression_stem; exact Hw|exact HT2].
-  eapply infer_expression_fork;
-    [apply infer_expression_stem; apply infer_map_via_lists|
-      apply infer_expression_stem; exact Hr|exact HT1].
+  has_type_intro; [|exact Hxs|exact HT4].
+  has_type_intro; [|exact Hm|exact HT3].
+  has_type_intro; [|exact Hw|exact HT2].
+  has_type_intro; [apply infer_map_via_lists|exact Hr|exact HT1].
 Qed.
 
 Definition map_array a b f := Eval cbn in to_tree
@@ -1087,26 +1049,25 @@ Defined.
 Lemma infer_map_array_specialisation : forall a b f A B F n,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
-  infer_expression AI @ (map_array a b f @ n) ==>
-    Sm (Array A n --> Array B n).
+  has_type AI (map_array a b f @ n) (Array A n --> Array B n).
 Proof using AI HL HA.
   intros a b f A B F n Ha Hb Hf HFA Hn.
   destruct (infer_map_array a b f A B F Ha Hb Hf HFA) as [M [HM HMT]].
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; exact HM.
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  has_type_intro.
+  - exact HM.
+  - apply infer_index; exact Hn.
   - apply HMT; exact Hn.
 Qed.
 Lemma infer_map_array_application : forall a b f A B F n xs,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
   infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
   infer AI @ xs ==> Sm (Array A n) ->
-  infer_expression AI @ (map_array a b f @ n @r xs) ==> Sm (Array B n).
+  has_type AI (map_array a b f @ n @r xs) (Array B n).
 Proof using AI HL HA.
   intros a b f A B F n xs Ha Hb Hf HFA Hn HX.
-  eapply infer_expression_fork.
+  has_type_intro.
   - eapply infer_map_array_specialisation; eassumption.
-  - apply infer_expression_stem; exact HX.
+  - exact HX.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 End MapTyping.
@@ -1184,21 +1145,20 @@ Proof using AI HL HA.
     apply type_app_stem_ev; apply type_app_stem_function.
     repeat first [eassumption|apply funty_eliminator_eval|progress type_app_tac].
 Defined.
-Lemma infer_map_array_with_expression : forall a b A B F e n,
+Lemma infer_map_array_with_function : forall a b A B F f n,
   infer AI @ a ==> Sm A -> infer AI @ b ==> Sm B ->
-  infer_expression AI @ e ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
-  infer_expression AI @ Fk (Fk (Sm (map_array_with a b)) e) (Sm n) ==>
-    Sm (Array A n --> Array B n).
+  infer AI @ f ==> Sm F -> type_app AI @ F @r A ==> Sm B -> unary_index n ->
+  has_type AI (map_array_with a b @ f @r n) (Array A n --> Array B n).
 Proof using AI HL HA.
-  intros a b A B F e n Ha Hb He HFA Hn.
+  intros a b A B F f n Ha Hb He HFA Hn.
   destruct (infer_map_array_with a b A B Ha Hb) as [M [HM HMT]].
   destruct (HMT F HFA) as [T [HT HTn]].
-  eapply infer_expression_fork.
-  - eapply infer_expression_fork.
-    + apply infer_expression_stem; exact HM.
+  has_type_intro.
+  - has_type_intro.
+    + exact HM.
     + exact He.
     + exact HT.
-  - apply infer_expression_stem; apply infer_index; exact Hn.
+  - apply infer_index; exact Hn.
   - apply HTn; exact Hn.
 Qed.
 End RuntimeAction.
@@ -1244,9 +1204,7 @@ Example take_two_truncates : forall b x y z,
 Proof. intros; apply take_array_list. Qed.
 
 (** Instantiate the support obligations with the live, sound declarations. *)
-Example all_take_two_padded : infer_expression array_ontology @
-    (take_array Lf @ Sm (Sm Lf) @r nil_value Lf) ==>
-    Sm (Array Lf (Sm (Sm Lf))).
+Example all_take_two_padded : has_type array_ontology (take_array Lf @ Sm (Sm Lf) @r nil_value Lf) (Array Lf (Sm (Sm Lf))).
 Proof.
    apply infer_take_array_list_application.
 
@@ -1268,36 +1226,46 @@ Proof.
 Qed.
 
 
-(** Computed array witnesses. *)
-Example computed_witness_reader_typed : infer_expression array_ontology @ generated_row_reader Lf Lf (Sm (Sm Lf)) ==>
-    Sm (Array (Array Lf (Sm (Sm Lf))) Lf --> 'List[Array Lf (Sm (Sm Lf))]).
+(** Computed array witnesses: one application computes a row, and its
+    value is the element witness of an outer-array reader. *)
+Example computed_witness_typed :
+  infer array_ontology @ array_value Lf (array_elements Lf (Sm (Sm Lf)) List.nil) ==>
+    Sm (Array Lf (Sm (Sm Lf))).
 Proof.
-   apply infer_generated_row_reader.
-
+  eapply array_ontology_EPT.
+  - apply (take_array_program_list Lf (Sm (Sm Lf)) Lf List.nil).
+  - apply infer_take_array_program_application.
+    + apply array_ontology_supports_list.
+    + apply array_ontology_support.
+    + apply infer_leaf.
+    + first [unary_tac|repeat constructor].
+    + apply infer_nil_value; [apply array_ontology_supports_list|apply infer_leaf].
+Qed.
+Example computed_witness_reader_typed :
+  has_type array_ontology
+    (read_array_program @ array_value Lf (array_elements Lf (Sm (Sm Lf)) List.nil) @r Lf)
+    (Array (Array Lf (Sm (Sm Lf))) Lf --> 'List[Array Lf (Sm (Sm Lf))]).
+Proof.
+  apply infer_read_array_witness.
   - apply array_ontology_supports_list.
   - apply array_ontology_support.
-
-  - apply infer_leaf.
+  - exact computed_witness_typed.
   - first [unary_tac|constructor].
-  - first [unary_tac|repeat constructor].
 Qed.
 Example computed_witness_reader_preserved :
   infer array_ontology @ array_reader (array_value Lf (Lf :: Lf :: List.nil)) Lf ==>
     Sm (Array (Array Lf (Sm (Sm Lf))) Lf --> 'List[Array Lf (Sm (Sm Lf))]).
 Proof.
-   eapply array_ontology_EPT.
-
-  - apply (generated_row_reader_eval Lf Lf (Sm (Sm Lf))).
-  - apply computed_witness_reader_typed.
+  eapply array_ontology_EPT; [|apply computed_witness_reader_typed].
+  eapply eval_appl; [apply read_array_specialises|apply read_array_eval].
 Qed.
 
 End FunctionEnabledExamples.
 
 (** Arrays use the same declarations as the generic and other data families. *)
 Example all_arrays_append_two_singletons :
-  infer_expression array_ontology @
-    (array_append @ (arrays.prepend Lf (arrays.empty Lf)
-      '* arrays.prepend Lf (arrays.empty Lf))) ==> Sm (Array Lf (Sm (Sm Lf))).
+  has_type array_ontology (array_append @ (arrays.prepend Lf (arrays.empty Lf)
+      '* arrays.prepend Lf (arrays.empty Lf))) (Array Lf (Sm (Sm Lf))).
 Proof.
   eapply infer_array_append_application with (n := Sm Lf) (m := Sm Lf);
     repeat first [apply array_ontology_support|apply arrays.infer_prepend|
@@ -1365,8 +1333,8 @@ Proof.
   apply (proj2 (structural_triage_plain _ _ _ _ _ _ HP)).
   unfold plain_triage, structural_fork.
   pose proof (get_tagged_none _ HX).
-  destruct (eval_app_r_inv _ _ _ H1) as [w [Hw HR]].
-  destruct (eval_app_r_inv _ _ _ H2) as [w2 [Hw2 HR2]].
+  destruct (eval_appl_inv _ _ _ H1) as [w [Hw HR]].
+  destruct (eval_appl_inv _ _ _ H2) as [w2 [Hw2 HR2]].
   cbn; repeat first [eassumption | progress evaluate].
 Qed.
 Local Opaque structural_fork.

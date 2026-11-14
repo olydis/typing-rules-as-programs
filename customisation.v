@@ -5,7 +5,7 @@
     ([count_employees]), the threshold query [paid_over_57], the salary bills ([naive_salary_bill], [salary_bill]),
     the naive and ghost-aware salary updates and [department_2026].
 
-    The patching of query programs and expressions
+    The patching of query programs and pending applications
     is in patching.v, which reopens a Rocq section of the same name and repeats
     the local tactics and declarations it needs. *)
 
@@ -544,7 +544,7 @@ Proof.
   intros f u v H; inv_out H.
   unfold fix_query at 1; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|eassumption].
-  eapply eval_c; eapply eval_appr.
+  eapply eval_c.
   - unfold tagged_query; evaluate.
   - eassumption.
 Qed.
@@ -554,7 +554,6 @@ Lemma employee_fork_query_eval : forall r x y xs ys zs,
   employee_fork_query r @ x @r y ==> zs.
 Proof.
   intros r x y xs ys zs Hx Hy Ha.
-  destruct (eval_pair_inv _ _ _ Ha) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
   eapply eval_appl.
   - unfold employee_fork_query, employee_fork_query_term, sum_fork_term; cbn.
     eapply S_q_eval; [apply K_q_eval|exact Hx|]. evaluate.
@@ -565,7 +564,6 @@ Lemma count_employees_fork_eval : forall r x y a b n,
   count_employees_fork r @ x @r y ==> n.
 Proof.
   intros r x y a b n Hx Hy Hsum.
-  destruct (eval_pair_inv _ _ _ Hsum) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
   eapply eval_appl.
   - unfold count_employees_fork, count_employees_fork_term, sum_fork_term; cbn.
     eapply S_q_eval; [apply K_q_eval|exact Hx|]. evaluate.

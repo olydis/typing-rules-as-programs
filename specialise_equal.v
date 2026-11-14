@@ -320,8 +320,8 @@ Proof.
   apply (proj2 (structural_triage_plain _ _ _ _ _ _ HP)).
   unfold plain_triage, structural_fork.
   pose proof (get_tagged_none _ HX).
-  destruct (eval_app_r_inv _ _ _ H1) as [w [Hw HR]].
-  destruct (eval_app_r_inv _ _ _ H2) as [w2 [Hw2 HR2]].
+  destruct (eval_appl_inv _ _ _ H1) as [w [Hw HR]].
+  destruct (eval_appl_inv _ _ _ H2) as [w2 [Hw2 HR2]].
   cbn; repeat first [eassumption | progress evaluate].
 Qed.
 

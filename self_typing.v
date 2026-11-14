@@ -33,11 +33,11 @@ Qed.
 (** The identity is implicitly polymorphic: it applies at every type. *)
 Theorem identity_polymorphic : forall AI u U,
   infer AI @ u ==> Sm U ->
-  infer_expression AI @ ('I @ u) ==> Sm U.
+  has_type AI ('I @ u) U.
 Proof.
-  intros AI u U Hu; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_I.
-  - apply infer_expression_stem; exact Hu.
+  intros AI u U Hu; has_type_intro.
+  - apply infer_I.
+  - exact Hu.
   - apply type_app_I.
 Qed.
 
@@ -251,12 +251,6 @@ Lemma infer_concrete : forall AI,
 Proof.
   intros AI H; unfold infer; apply Z_preserves_concrete; lf_ai AI H.
 Qed.
-Lemma infer_expression_concrete : forall AI,
-  concrete AI -> concrete (infer_expression AI).
-Proof.
-  intros AI H; unfold infer_expression; apply Z_preserves_concrete; lf_ai AI H.
-Qed.
-
 Lemma type_app_all_concrete : concrete (type_app paper_ontology).
 Proof.
   apply type_app_concrete;
@@ -267,22 +261,13 @@ Proof.
   apply infer_concrete;
     apply paper_ontology_concrete.
 Qed.
-Lemma infer_expression_all_concrete :
-  concrete (infer_expression paper_ontology).
-Proof.
-  apply infer_expression_concrete;
-    apply paper_ontology_concrete.
-Qed.
-
 (** The typing programs of the combined declarations are concrete. *)
 Lemma all_typing_concrete :
   concrete paper_ontology /\ concrete (type_app paper_ontology) /\
-  concrete (infer paper_ontology) /\
-  concrete (infer_expression paper_ontology).
+  concrete (infer paper_ontology).
 Proof.
   (* Not [repeat split]: it would unfold [concrete] on the trees. *)
-  exact (conj paper_ontology_concrete (conj type_app_all_concrete
-    (conj infer_all_concrete infer_expression_all_concrete))).
+  exact (conj paper_ontology_concrete (conj type_app_all_concrete infer_all_concrete)).
 Qed.
 End Concreteness.
 

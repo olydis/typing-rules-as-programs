@@ -74,7 +74,7 @@ Proof.
   intros f u v H; inv_out H.
   unfold fix_function at 1; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|eassumption].
-  eapply eval_c; eapply eval_appr; [apply tagged_fun_eval|eassumption].
+  eapply eval_c; [apply tagged_fun_eval|eassumption].
 Qed.
 
 
@@ -150,10 +150,10 @@ Theorem infer_application : forall f F u U V,
   infer AI @ f ==> Sm F ->
   infer AI @ u ==> Sm U ->
   type_app AI @ F @r U ==> Sm V ->
-  infer_expression AI @ (f @ u) ==> Sm V.
+  has_type AI (f @ u) V.
 Proof.
-  intros f F u U V Hf Hu Happ; eapply infer_expression_fork;
-    [apply infer_expression_stem; exact Hf|apply infer_expression_stem; exact Hu|exact Happ].
+  intros f F u U V Hf Hu Happ; eapply has_type_ap;
+    [exact Hf|exact Hu|exact Happ].
 Qed.
 
 
@@ -402,15 +402,15 @@ Lemma Z_evaln_unfold_inv : forall n f x v,
 Proof.
   intros n f x v H; unfold Z in H; invert_evaln.
   match goal with
-  | H : evaln _ (Fk (Sm dup_z) (Sm _)) _ |- _ =>
+  | H : evaln _ (dup_z @ _) _ |- _ =>
       unfold dup_z at 1 in H
   end; invert_evaln.
   match goal with
-  | H : evaln _ (Fk (Sm bz) (Sm _)) _ |- _ =>
+  | H : evaln _ (bz @ _) _ |- _ =>
       unfold bz in H
   end; invert_evaln.
   match goal with
-  | H : evaln _ (?f @ _) ?w, H' : evaln ?m (Fk (Sm ?w) (Sm _)) _ |- _ =>
+  | H : evaln _ (?f @ _) ?w, H' : evaln ?m (?w @ _) _ |- _ =>
       exists m, w; split; [lia|split; [|exact H']];
       apply evaln_eval in H; exact H
   end.
@@ -432,8 +432,7 @@ Lemma dither_fn_functional_eval :
   (dither_function 'C tagged_fun) @ Z (dither_function 'C tagged_fun) ==>
     typed_compose typed_neg dither_fn 'tt.
 Proof.
-  apply eval_c; eapply eval_appr; [apply tagged_fun_eval|].
-  apply typed_compose_with_operation.
+  eapply eval_c; [apply tagged_fun_eval|apply typed_compose_with_operation].
 Qed.
 
 Lemma dither_fn_tt_evaln_smaller : forall n v,
@@ -463,27 +462,24 @@ Proof.
   exact (IH m Hm w Hw).
 Qed.
 
-(** ** The typing [dither_fn @ tt :: Bool]
-
-    As an expression, [dither_fn @ 'tt] is the application of the quoted
-    value [dither_fn] to the quoted value ['tt]. *)
-Lemma dither_fn_tt_infer_expression : forall declarations : Decl,
+(** ** The typing [dither_fn @ tt :: Bool] *)
+Lemma dither_fn_tt_typed : forall declarations : Decl,
   supports_booleans declarations ->
-  infer_expression declarations @ (dither_fn @ 'tt) ==> Sm ('Bool).
+  has_type declarations (dither_fn @ 'tt) ('Bool).
 Proof.
   intros declarations Hsupports.
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; apply dither_fn_infer; exact Hsupports.
-  - apply infer_expression_stem; apply tt_infer; exact Hsupports.
+  eapply has_type_ap.
+  - apply dither_fn_infer; exact Hsupports.
+  - apply tt_infer; exact Hsupports.
   - apply type_app_abstract; apply funty_eliminator_eval.
 Qed.
 
 (** Paper Theorem: dither_fn @ tt is typed, yet has no value. *)
 Theorem dither_fn_typed_no_value : forall declarations : Decl,
   supports_booleans declarations ->
-  infer_expression declarations @ (dither_fn @ 'tt) ==> Sm ('Bool) /\
+  has_type declarations (dither_fn @ 'tt) ('Bool) /\
   forall v, ~ (dither_fn @ 'tt ==> v).
 Proof.
   intros declarations H; split;
-  [exact (dither_fn_tt_infer_expression declarations H) | exact dither_fn_tt_no_value].
+  [exact (dither_fn_tt_typed declarations H) | exact dither_fn_tt_no_value].
 Qed.

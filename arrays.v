@@ -159,13 +159,13 @@ Definition arrow_wait A a := 'wait2[payload_elim, A, a].
 Lemma arrow_wait_eval : forall A a F V, a @ F @r A ==> V -> arrow_wait A a @ F ==> V.
 Proof.
   intros A a F V H; pose proof (payload_eliminator_some _ _ _ _ H) as H1.
-  destruct (eval_app_r_inv _ _ _ H1) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
+  destruct (eval_appl_inv _ _ _ H1) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
   apply wait2_eval; eapply eval_appl; eassumption.
 Qed.
 Lemma arrow_wait_inv : forall A a F V, arrow_wait A a @ F ==> V -> a @ F @r A ==> V.
 Proof.
   intros A a F V H; apply wait2_eval_inv in H.
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hv]].
+  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]].
   apply payload_eliminator_inv; eapply eval_appl; [apply wait_eval; exact Hw|exact Hv].
 Qed.
 Definition array_step A a E := ('onStem1 E) 'C arrow_wait A a.
@@ -189,7 +189,7 @@ Lemma array_elim_app : forall X a U V,
   array_elim @ X @r a @r U ==> V <-> array_core X a @ U ==> V.
 Proof.
   intros X a U V; split; intro H.
-  - destruct (eval_pair_inv _ _ _ H) as [w [u [Hw [Hu Hwu]]]]; inversion Hu; subst u.
+  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hwu]].
     pose proof (eval_deterministic _ _ Hw _ (array_elim_eval X a)); subst w; exact Hwu.
   - eapply eval_appl; [apply array_elim_eval | exact H].
 Qed.
@@ -205,10 +205,10 @@ Lemma array_eliminator_unary : forall A n a U V,
   array_eliminator A n @ a @r U ==> V <-> array_unary A a n @ U ==> V.
 Proof.
   intros A n a U V; unfold array_eliminator, array_unary; split; intro H.
-  - destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
+  - destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]]; apply wait_eval_inv in Hw.
     apply wait2_eval; eapply eval_appl; eassumption.
   - apply wait2_eval_inv in H.
-    destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hv]].
+    destruct (eval_appl_inv _ _ _ H) as [w [Hw Hv]].
     eapply eval_appl; [apply wait_eval; exact Hw|exact Hv].
 Qed.
 
@@ -424,10 +424,8 @@ Proof.
   remember (path_fn path_left (path_fn path_left C)) as Em eqn:HEm.
   remember (path_fn path_arg (path_fn path_arg Em)) as B eqn:HB.
   pose proof (array_splice_eval En Em B) as HS.
-  destruct (eval_pair_inv _ _ _ HS) as [f2 [b2 [H2 [Hb2 H2']]]];
-    inversion Hb2; subst b2; clear Hb2.
-  destruct (eval_pair_inv _ _ _ H2) as [f1 [d1 [H1 [Hd1 H1']]]];
-    inversion Hd1; subst d1; clear Hd1.
+  destruct (eval_appl_inv _ _ _ HS) as [f2 [H2 H2']].
+  destruct (eval_appl_inv _ _ _ H2) as [f1 [H1 H1']].
   pose proof (acc_left_eval (path_fn path_right C)) as A1; rewrite <- HEn in A1.
   pose proof (acc_left_eval (path_fn path_left C)) as A2; rewrite <- HEm in A2.
   pose proof (acc_arg_eval (path_fn path_arg Em)) as A3; rewrite <- HB in A3.
@@ -568,11 +566,11 @@ Qed.
 Lemma infer_array_application : forall AI xs A n f U,
   infer AI @ xs ==> Sm (Array A n) ->
   infer AI @ f ==> Sm (consumer_type A n U) ->
-  infer_expression AI @ (xs @ f) ==> Sm U.
+  has_type AI (xs @ f) U.
 Proof.
-  intros; eapply infer_expression_fork;
-    [apply infer_expression_stem; eassumption|
-     apply infer_expression_stem; eassumption|apply type_app_Array].
+  intros; has_type_intro;
+    [eassumption|
+     eassumption|apply type_app_Array].
 Qed.
 
 Definition append_carrier xs ys := ys 'C xs.
@@ -615,11 +613,11 @@ Lemma infer_append_carrier_application : forall AI xs ys A n m f U,
   infer AI @ xs ==> Sm (Array A n) ->
   infer AI @ ys ==> Sm (Array A m) ->
   infer AI @ f ==> Sm (consumer_type A (index_sum n m) U) ->
-  infer_expression AI @ (append_carrier xs ys @ f) ==> Sm U.
+  has_type AI (append_carrier xs ys @ f) U.
 Proof.
-  intros; eapply infer_expression_fork.
-  - apply infer_expression_stem; eapply infer_append_carrier; eassumption.
-  - apply infer_expression_stem; eassumption.
+  intros; has_type_intro.
+  - eapply infer_append_carrier; eassumption.
+  - eassumption.
   - apply type_app_append_carrier.
 Qed.
 
@@ -816,7 +814,7 @@ Proof.
     + apply empty_eval.
 Qed.
 Example infer_appended_leaves_application : 
-  infer_expression array_ontology @ (appended_leaves @ second_leaf) ==> Sm Lf.
+  has_type array_ontology (appended_leaves @ second_leaf) Lf.
 Proof.
   eapply infer_array_application; [apply infer_appended_leaves|].
   unfold second_leaf; eapply infer_lam.
@@ -864,11 +862,11 @@ Qed.
 Theorem infer_array_append_application : forall AI xs ys A n m,
   supports_arrays AI ->
   infer AI @ xs ==> Sm (Array A n) -> infer AI @ ys ==> Sm (Array A m) ->
-  infer_expression AI @ (array_append @ (xs '* ys)) ==> Sm (Array A (index_sum n m)).
+  has_type AI (array_append @ (xs '* ys)) (Array A (index_sum n m)).
 Proof.
-  intros AI xs ys A n m HS HX HY; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_array_append.
-  - apply infer_expression_stem; apply infer_product_value; eassumption.
+  intros AI xs ys A n m HS HX HY; has_type_intro.
+  - apply infer_array_append.
+  - apply infer_product_value; eassumption.
   - apply type_app_array_append; exact HS.
 Qed.
 
@@ -877,9 +875,7 @@ Example append_two_singletons :
     ==> appended_leaves.
 Proof. apply array_append_eval. Qed.
 Example infer_append_two_singletons :
-  infer_expression array_ontology @
-    (array_append @ (prepend Lf (empty Lf) '* prepend Lf (empty Lf)))
-      ==> Sm (Array Lf (Sm (Sm Lf))).
+  has_type array_ontology (array_append @ (prepend Lf (empty Lf) '* prepend Lf (empty Lf))) (Array Lf (Sm (Sm Lf))).
 Proof.
   eapply infer_array_append_application with (n := Sm Lf) (m := Sm Lf);
     repeat first [apply array_ontology_support|apply infer_prepend|
@@ -891,14 +887,11 @@ Proof.
   eapply eval_appl; [apply append_two_singletons|apply appended_leaves_eval].
 Qed.
 Example infer_append_consumer : 
-  infer_expression array_ontology @
-    (array_append @ (prepend Lf (empty Lf) '* prepend Lf (empty Lf)) @r second_leaf)
-      ==> Sm Lf.
+  has_type array_ontology (array_append @ (prepend Lf (empty Lf) '* prepend Lf (empty Lf)) @r second_leaf) Lf.
 Proof.
-  eapply infer_expression_fork.
+  has_type_intro.
   - apply infer_append_two_singletons.
-  - apply infer_expression_stem.
-    unfold second_leaf; eapply infer_lam.
+  - unfold second_leaf; eapply infer_lam.
 
     + apply infer_K1; eapply infer_lam;
         [apply infer_I|apply infer_leaf|apply type_app_I].
@@ -961,7 +954,7 @@ Proof.
 Qed.
 
 Lemma array_ontology_EPT : forall e v T,
-  e ==> v -> infer_expression array_ontology @ e ==> Sm T ->
+  e ==> v -> has_type array_ontology e T ->
   infer array_ontology @ v ==> Sm T.
 Proof.
   intros e v T He Ht.

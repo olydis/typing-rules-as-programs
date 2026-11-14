@@ -1,71 +1,130 @@
 (** * Snapshots of evaluation (paper: Towards Typed Tooling, "Snapshots of evaluation").
 
-    A small-step semantics with a step counter, derived from the big-step
-    semantics (the paper's evaluation figure), made into programs on expression trees:
-    [step], [bound_eval], agreement with the evaluation rules ([steps_agree]), each step
-    preserving expression typing ([step_preserves_expression_typing],
+    Programs that receive a computation in progress as an argument need the
+    computation as data, so here computations are encoded as trees, with
+    their meaning given by application of values ([run], [run_enc]).  On
+    encodings come a small-step semantics with a step counter, derived from
+    the evaluation rules (the paper's evaluation figure), and programs that
+    perform it: [step], [bound_eval], agreement with evaluation
+    ([steps_agree]), each step preserving the typing of snapshots
+    ([step_preserves_expression_typing],
     [bound_eval_preserves_expression_typing]), queries observing every
     snapshot ([size_on_snapshots], [size_on_mid_snapshots]), a computed
-    rule-by-rule snapshot of a name test without expression type
-    ([name_test_snapshot_untyped]), and patching a paused expression
+    rule-by-rule snapshot of a name test without type
+    ([name_test_snapshot_untyped]), and patching a paused computation
     ([patch_during_evaluation]). *)
 
 
 (* ===================================================================== *)
-(** * A small-step semantics derived from the big-step semantics (meta level).
+(** * Encoded computations and a small-step semantics on them (meta level).
 
-    Expressions are trees: [Sm v] is the value [v], [Fk e1 e2] is the
-    application of [e1] to [e2], and a leaf is not an evaluable expression.
-    An application [Fk (Sm f) (Sm u)] of a value to a value is _ready_.
-    One step rewrites the first ready application in evaluation order
-    (operator before argument, as in the evaluation rules) by the big-step rule that
-    applies to it; each evaluation rule that acts on a ready application
-    becomes one rewrite:
+    An encoded computation is a tree: [Sm v] is the finished value [v],
+    [Fk e1 e2] is the pending application of [e1] to [e2], and a leaf
+    encodes no computation.  [run e v] gives the encoding its meaning by
+    application of values: [e1] and [e2] run to values, and the first is
+    applied to the second.  [enc d] encodes the application [d], and
+    [run (enc d) v] exactly when [d ==> v] ([run_enc]).
 
-    - [Lf @ u]                      to the value [Sm u]        (eval_to_stem)
-    - [Sm g @ u]                    to the value [Fk g u]      (eval_to_fork)
-    - [K1 y @ u]                    to the value [y]           (eval_k)
-    - [S2[g,h] @ u]                 to [Fk (g @ u) (h @ u)]    (eval_s)
-    - [triage[f0,f1,f2] @ Lf]       to the value [f0]          (eval_leaf)
-    - [triage[f0,f1,f2] @ Sm x]     to [f1 @ x]                (eval_stem)
-    - [triage[f0,f1,f2] @ Fk x y]   to [Fk (f2 @ x) (Sm y)]    (eval_fork)
+    An encoded application [f @@t u] of a value to a value is _ready_.  One
+    step rewrites the first ready application in evaluation order (operator
+    before argument) by the evaluation rule that applies to it; each
+    evaluation rule on [f @ u] becomes one rewrite:
 
-    The two congruence rules [eval_appl] and [eval_appr] become the choice
-    of position.  A step acts on one node at a time, not in parallel: the
-    program below then needs only one traversal, which stops at
-    the first ready application, and the agreement proofs follow the evaluation rules
-    rule by rule.
+    - [Lf @ u]                      to the value [Sm u]          (eval_to_stem)
+    - [Sm g @ u]                    to the value [Fk g u]        (eval_to_fork)
+    - [K1 y @ u]                    to the value [y]             (eval_k)
+    - [S2[g,h] @ u]                 to [Fk (g @@t u) (h @@t u)]  (eval_s)
+    - [triage[f0,f1,f2] @ Lf]       to the value [f0]            (eval_leaf)
+    - [triage[f0,f1,f2] @ Sm x]     to [f1 @@t x]                (eval_stem)
+    - [triage[f0,f1,f2] @ Fk x y]   to [f2 @@t x @@tr y]         (eval_fork)
+
+    The parts that a rule evaluates before its last application (the
+    premise of [eval_appl] on [d], the first two premises of [eval_s]) are
+    pending in the encoding, and steps take them by position: the operator
+    before the argument.  A step acts on one node at a time, not in
+    parallel: the program below then needs only one traversal, which stops
+    at the first ready application, and the agreement proofs follow the
+    evaluation rules rule by rule.
 
     Name tests.  The IsNamed test [is_named n] is typed as a whole, by
     the IsNamed family: at an argument of abstract type the intermediate
-    expressions of the name test (which take the argument apart with
+    snapshots of the name test (which take the argument apart with
     triage) have no type.  The derived semantics [step] treats a name test
     applied to a value as one step, to its Boolean answer.  The
     purely rule-by-rule semantics is [rule_steps].
 
-    Finished expressions [Sm v] are left alone by further steps, and so are
-    stuck expressions (those that reach a leaf in an expression position);
-    a stuck expression never becomes a value. *)
+    Finished computations [Sm v] are left alone by further steps, and so
+    are stuck ones (those with a leaf where a computation is expected); a
+    stuck computation never becomes a value. *)
 
 From TreeTyping Require Import tree typing.
-From Stdlib Require Import Arith Lia.
+From Stdlib Require Import Arith Lia String.
+
+
+(** * Encoded computations *)
+
+(** [f @@t u] encodes [f @ u], and [e @@tr u] the application of the value
+    of [e] to [u], as [d @r u] does for applications.  They are only for
+    parsing: printed, they would hide the combinator notations ([I], [K1],
+    ...) whose trees have the same shapes. *)
+Notation "f @@t u" := (Fk (Sm f) (Sm u)) (at level 45, left associativity, only parsing).
+Notation "e @@tr u" := (Fk e (Sm u)) (at level 45, left associativity, only parsing).
+
+Fixpoint enc (d : Application) : Combination :=
+  match d with
+  | f @ u => f @@t u
+  | d @r u => enc d @@tr u
+  end.
+
+(** [run e v]: the computation encoded by [e] has the value [v]. *)
+Inductive run : Combination -> Combination -> Prop :=
+| run_value : forall v, run (Sm v) v
+| run_app : forall e1 e2 f u v,
+    run e1 f -> run e2 u -> f @ u ==> v -> run (Fk e1 e2) v.
+
+Lemma run_value_inv : forall v w, run (Sm v) w -> w = v.
+Proof. intros v w H; inversion H; reflexivity. Qed.
+
+Lemma run_app_inv : forall e1 e2 v, run (Fk e1 e2) v ->
+  exists f u, run e1 f /\ run e2 u /\ f @ u ==> v.
+Proof. intros e1 e2 v H; inversion H; subst; eauto. Qed.
+
+Lemma run_leaf : forall v, ~ run Lf v.
+Proof. intros v H; inversion H. Qed.
+
+Lemma run_ap : forall f u v, run (f @@t u) v <-> f @ u ==> v.
+Proof.
+  intros f u v; split; intro H.
+  - destruct (run_app_inv _ _ _ H) as [f' [u' [Hf [Hu Hv]]]].
+    apply run_value_inv in Hf, Hu; subst; exact Hv.
+  - eapply run_app; [constructor|constructor|exact H].
+Qed.
+
+Lemma run_enc : forall d v, run (enc d) v <-> d ==> v.
+Proof.
+  induction d as [f u|d IH u]; intro v; cbn [enc]; [apply run_ap|split; intro H].
+  - destruct (run_app_inv _ _ _ H) as [w [u' [Hd [Hu Hv]]]].
+    apply run_value_inv in Hu; subst; eapply eval_appl; [apply IH; exact Hd|exact Hv].
+  - destruct (eval_appl_inv _ _ _ H) as [w [Hd Hv]].
+    eapply run_app; [apply IH; exact Hd|constructor|exact Hv].
+Qed.
 
 
 (** * One rewrite per rule *)
 
-(** [rule_rewrite f u] rewrites the ready application [f @ u] by the
-    big-step rule for the shape of [f] (and of [u], for triage). *)
+(** [rule_rewrite f u] rewrites the ready application [f @@t u] by the
+    evaluation rule for the shape of [f] (and of [u], for triage). *)
 Definition rule_rewrite (f u : Combination) : Combination :=
   match f with
   | Lf => Sm (Sm u)
   | Sm g => Sm (Fk g u)
   | Fk Lf y => Sm y
-  | Fk (Sm g) h => Fk (g @ u) (h @ u)
+  | Fk (Sm g) h => Fk (g @@t u) (h @@t u)
   | Fk (Fk f0 f1) f2 =>
       match u with
       | Lf => Sm f0
-      | Sm x => f1 @ x
-      | Fk x y => Fk (f2 @ x) (Sm y)
+      | Sm x => f1 @@t x
+      | Fk x y => f2 @@t x @@tr y
       end
   end.
 
@@ -132,7 +191,7 @@ Section Steps.
 Variable rw : Combination -> Combination -> Combination.
 
 (** [step_with rw e] rewrites the first ready application of [e] in
-    evaluation order; a finished or stuck expression is returned as is. *)
+    evaluation order; a finished or stuck computation is returned as is. *)
 Fixpoint step_with (e : Combination) : Combination :=
   match e with
   | Fk (Sm f) (Sm u) => rw f u
@@ -170,43 +229,44 @@ Hypothesis rw_ok : forall f u,
 (** ** Soundness: a step does not change the value *)
 
 Lemma rule_rewrite_back : forall f u v,
-  rule_rewrite f u ==> v -> f @ u ==> v.
+  run (rule_rewrite f u) v -> f @ u ==> v.
 Proof.
-  intros f u v H; destruct f as [|g|[|g|f0 f1] h]; cbn in H.
-  - inv_out H; constructor.
-  - inv_out H; constructor.
-  - inv_out H; constructor.
-  - apply eval_s; exact H.
+  intros f u v H; destruct f as [|g|[|g|f0 f1] h]; cbn [rule_rewrite] in H.
+  - apply run_value_inv in H; subst; constructor.
+  - apply run_value_inv in H; subst; constructor.
+  - apply run_value_inv in H; subst; constructor.
+  - destruct (run_app_inv _ _ _ H) as [a [b [Ha [Hb Hv]]]].
+    apply run_ap in Ha, Hb; eapply eval_s; eassumption.
   - destruct u as [|x|x y].
-    + inv_out H; constructor.
-    + apply eval_stem; exact H.
-    + apply eval_fork; exact H.
+    + apply run_value_inv in H; subst; constructor.
+    + apply eval_stem, run_ap, H.
+    + apply eval_fork, (proj1 (run_enc (h @ x @r y) v)), H.
 Qed.
 
-Lemma rw_back : forall f u v, rw f u ==> v -> f @ u ==> v.
+Lemma rw_back : forall f u v, run (rw f u) v -> f @ u ==> v.
 Proof.
   intros f u v H; destruct (rw_ok f u) as [E|[w [Hw E]]]; rewrite E in H.
   - apply rule_rewrite_back; exact H.
-  - inv_out H; exact Hw.
+  - apply run_value_inv in H; subst; exact Hw.
 Qed.
 
-Lemma step_with_back : forall e v, step_with e ==> v -> e ==> v.
+Lemma step_with_back : forall e v, run (step_with e) v -> run e v.
 Proof.
   induction e as [|a _|e1 IH1 e2 IH2]; intros v H; try exact H.
   destruct e1 as [|f|a b].
   - exact H.
   - destruct e2 as [|u|c d].
     + exact H.
-    + apply rw_back; exact H.
+    + apply run_ap, rw_back; exact H.
     + cbn [step_with] in H.
-      destruct (eval_arg_value_inv _ _ _ H) as [w [Hw Hfw]].
-      eapply eval_arg_value; [apply IH2; exact Hw|exact Hfw].
+      destruct (run_app_inv _ _ _ H) as [f' [w [Hf [Hw Hfw]]]].
+      eapply run_app; [exact Hf|apply IH2; exact Hw|exact Hfw].
   - cbn [step_with] in H.
-    destruct (eval_pair_inv _ _ _ H) as [v1 [v2 [H1 [H2 H3]]]].
-    eapply eval_pair; [apply IH1; exact H1|exact H2|exact H3].
+    destruct (run_app_inv _ _ _ H) as [v1 [v2 [H1 [H2 H3]]]].
+    eapply run_app; [apply IH1; exact H1|exact H2|exact H3].
 Qed.
 
-Lemma steps_with_sound : forall k e v, steps_with k e = Sm v -> e ==> v.
+Lemma steps_with_sound : forall k e v, steps_with k e = Sm v -> run e v.
 Proof.
   induction k; intros e v H; cbn in H.
   - subst; constructor.
@@ -217,7 +277,7 @@ Qed.
 
 (** [advances e e']: [e'] is one step from [e], at a ready application. *)
 Inductive advances : Combination -> Combination -> Prop :=
-| adv_ready : forall f u, advances (f @ u) (rw f u)
+| adv_ready : forall f u, advances (f @@t u) (rw f u)
 | adv_arg : forall f a b e', advances (Fk a b) e' ->
     advances (Fk (Sm f) (Fk a b)) (Fk (Sm f) e')
 | adv_op : forall a b e2 e', advances (Fk a b) e' ->
@@ -266,7 +326,7 @@ Qed.
 (** A ready application whose rule leads in [k] steps to [Sm v]. *)
 Lemma ready_advances : forall f u v k,
   f @ u ==> v -> advances_n k (rule_rewrite f u) (Sm v) ->
-  exists j, advances_n j (f @ u) (Sm v).
+  exists j, advances_n j (f @@t u) (Sm v).
 Proof.
   intros f u v k Hv Hk.
   destruct (rw_ok f u) as [E|[w [Hw E]]].
@@ -275,30 +335,40 @@ Proof.
     exists 1; econstructor; [apply adv_ready|rewrite E; constructor].
 Qed.
 
-Lemma eval_advances : forall e v, e ==> v -> exists k, advances_n k e (Sm v).
+Lemma eval_advances : forall d v, d ==> v -> exists k, advances_n k (enc d) (Sm v).
 Proof.
-  intros e v H; induction H.
-  - exists 0; constructor.
+  intros d v H; induction H; cbn [enc] in *.
   - destruct IHeval1 as [j Hj]; destruct IHeval2 as [k Hk].
     exists (j + k); eapply advances_n_trans; [apply advances_n_op; exact Hj|exact Hk].
-  - destruct IHeval1 as [j Hj]; destruct IHeval2 as [k Hk].
-    exists (j + k); eapply advances_n_trans; [apply advances_n_arg; exact Hj|exact Hk].
   - eapply ready_advances with (k := 0); [constructor|constructor].
   - eapply ready_advances with (k := 0); [constructor|constructor].
   - eapply ready_advances with (k := 0); [constructor|constructor].
-  - destruct IHeval as [k Hk]; eapply ready_advances; [apply eval_s; exact H|exact Hk].
+  - destruct IHeval1 as [i Hi]; destruct IHeval2 as [j Hj]; destruct IHeval3 as [k Hk].
+    eapply ready_advances; [eapply eval_s; eassumption|cbn [rule_rewrite]].
+    eapply advances_n_trans; [apply advances_n_op; exact Hi|].
+    eapply advances_n_trans; [apply advances_n_arg; exact Hj|exact Hk].
   - eapply ready_advances with (k := 0); [constructor|constructor].
   - destruct IHeval as [k Hk]; eapply ready_advances; [apply eval_stem; exact H|exact Hk].
   - destruct IHeval as [k Hk]; eapply ready_advances; [apply eval_fork; exact H|exact Hk].
 Qed.
 
-Lemma steps_with_complete : forall e v, e ==> v -> exists k, steps_with k e = Sm v.
+Lemma run_advances : forall e v, run e v -> exists k, advances_n k e (Sm v).
 Proof.
-  intros e v H; destruct (eval_advances e v H) as [k Hk].
+  intros e v H; induction H as [v|e1 e2 f u v H1 IH1 H2 IH2 Hv].
+  - exists 0; constructor.
+  - destruct IH1 as [i Hi]; destruct IH2 as [j Hj].
+    destruct (eval_advances _ _ Hv) as [k Hk].
+    exists (i + (j + k)); eapply advances_n_trans; [apply advances_n_op; exact Hi|].
+    eapply advances_n_trans; [apply advances_n_arg; exact Hj|exact Hk].
+Qed.
+
+Lemma steps_with_complete : forall e v, run e v -> exists k, steps_with k e = Sm v.
+Proof.
+  intros e v H; destruct (run_advances e v H) as [k Hk].
   exists k; apply advances_n_steps; exact Hk.
 Qed.
 
-Lemma steps_with_agree : forall e v, e ==> v <-> exists k, steps_with k e = Sm v.
+Lemma steps_with_agree : forall e v, run e v <-> exists k, steps_with k e = Sm v.
 Proof.
   intros e v; split; [apply steps_with_complete|].
   intros [k Hk]; eapply steps_with_sound; exact Hk.
@@ -327,38 +397,144 @@ Definition steps := steps_with atomic_rewrite.
 
 
 Lemma steps_agree : forall e v,
-  e ==> v <-> exists k, steps k e = Sm v.
+  run e v <-> exists k, steps k e = Sm v.
 Proof. exact (steps_with_agree atomic_rewrite atomic_rewrite_ok). Qed.
+
+(** In particular, steps take the encoding of an application to its value. *)
+Lemma steps_agree_eval : forall d v,
+  d ==> v <-> exists k, steps k (enc d) = Sm v.
+Proof.
+  intros d v; split; intro H.
+  - apply steps_agree, run_enc, H.
+  - apply run_enc, steps_agree, H.
+Qed.
+
+
+(** * Typing encoded computations
+
+    The program [infer_expression] types encoded computations, and so
+    snapshots, by a fold of type application over the tree:
+
+      infer_expression = | Lf       => Lf
+                         | Sm u     => infer @ u
+                         | Fk e1 e2 => let Sm T1 = infer_expression @ e1 in
+                                       let Sm T2 = infer_expression @ e2 in T1 # T2
+
+    A snapshot [e] has type [T] ([e :: T]) when
+    [infer_expression AI @ e ==> Sm T].  On the encoding of an application
+    this is the type of the application ([infer_expression_enc]).  As
+    compiled, both parts are typed before either result is tested ([star]
+    lifts the [T1]-free [infer_expression @ e2]); then [type_app @ T1] is
+    formed and, if [T2] is a success, applied to [T2]. *)
+
+Section ExpressionTyping.
+Import ClauseNotation.
+Open Scope string_scope.
+Local Opaque app inf type_app_stem.
+Variable AI : Combination.
+Local Abbreviation type_app := (app AI).
+Local Abbreviation infer := (inf AI).
+Local Notation "x # y" := (Val type_app @@ x @@ y)
+  (in custom clause at level 20, left associativity).
+
+Definition infer_expression_body_package :
+  { t | to_tree <{
+      fun "infer_expression" =>
+        shape
+        | Lf => Lf
+        | Sm "u" => infer @ "u"
+        | Fk "e1" "e2" =>
+            let Sm "T1" = "infer_expression" @ "e1" in
+            let Sm "T2" = "infer_expression" @ "e2" in "T1" # "T2"
+        end }> = t }.
+Proof. eexists; simpl; reflexivity. Defined.
+
+Definition infer_expression_body := Eval cbn in proj1_sig infer_expression_body_package.
+
+Definition infer_expression := Z infer_expression_body.
+
+Local Notation "F # U" := (type_app @ F @r U) (at level 45, left associativity).
+
+Lemma infer_expression_leaf : infer_expression @ Lf ==> Lf.
+Proof. unfold infer_expression; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
+
+Lemma infer_expression_stem : forall u T,
+  infer @ u ==> Sm T -> infer_expression @ Sm u ==> Sm T.
+Proof. intros u T Hu; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
+
+Lemma infer_expression_fork : forall e1 e2 T1 T2 R,
+  infer_expression @ e1 ==> Sm T1 -> infer_expression @ e2 ==> Sm T2 ->
+  T1 # T2 ==> R -> infer_expression @ Fk e1 e2 ==> R.
+Proof. intros; invert_eval; eapply Z_unfold; cbv -[type_app infer]; evaluate. Qed.
+
+Lemma infer_expression_stem_inv : forall u T,
+  infer_expression @ Sm u ==> T -> infer @ u ==> T.
+Proof.
+  intros u T H; apply Z_unfold_inv in H; cbv -[type_app infer] in H; invert_eval.
+Qed.
+
+Lemma infer_expression_fork_inv : forall e1 e2 T,
+  infer_expression @ Fk e1 e2 ==> Sm T ->
+  exists T1 T2, infer_expression @ e1 ==> Sm T1 /\ infer_expression @ e2 ==> Sm T2 /\
+    T1 # T2 ==> Sm T.
+Proof.
+  intros e1 e2 T H; apply Z_unfold_inv in H; cbv -[type_app infer Z] in H; invert_eval.
+  do 2 eexists; split; [eassumption|split; [eassumption|eapply eval_appl; eassumption]].
+Qed.
+
+Lemma infer_expression_ap : forall f u T,
+  infer_expression @ (f @@t u) ==> Sm T <-> has_type AI (f @ u) T.
+Proof.
+  intros f u T; split; intro H.
+  - destruct (infer_expression_fork_inv _ _ _ H) as [F [U [Hf [Hu HA]]]].
+    apply infer_expression_stem_inv in Hf, Hu; eapply has_type_ap; eassumption.
+  - destruct (has_type_ap_inv _ _ _ _ H) as [F [U [Hf [Hu HA]]]].
+    eapply infer_expression_fork; [apply infer_expression_stem; exact Hf|
+      apply infer_expression_stem; exact Hu|exact HA].
+Qed.
+
+(** The type of the encoding of an application is the type of the application. *)
+Lemma infer_expression_enc : forall d T,
+  infer_expression @ enc d ==> Sm T <-> has_type AI d T.
+Proof.
+  induction d as [f u|d IH u]; intro T; cbn [enc]; [apply infer_expression_ap|split; intro H].
+  - destruct (infer_expression_fork_inv _ _ _ H) as [D [U [Hd [Hu HA]]]].
+    apply infer_expression_stem_inv in Hu; eapply has_type_apr; [apply IH; exact Hd|exact Hu|exact HA].
+  - destruct (has_type_apr_inv _ _ _ _ H) as [D [U [Hd [Hu HA]]]].
+    eapply infer_expression_fork; [apply IH; exact Hd|apply infer_expression_stem; exact Hu|exact HA].
+Qed.
+
+End ExpressionTyping.
 
 
 (** * Progress
 
     Every ready application is rewritten by a rule (or, for a name test,
-    to its answer), so an expression gets stuck only where a leaf stands
-    in an expression position.  An expression with an expression type has
-    no such leaf, and neither has any of its steps.  So each snapshot of a
-    typed expression is a value or takes a step.  No preservation of
-    typing is used. *)
+    to its answer), so a computation gets stuck only where a leaf stands
+    where a computation is expected.  A typed computation has no such
+    leaf, and neither has any of its steps.  So each snapshot of a typed
+    computation is a value or takes a step.  No preservation of typing is
+    used. *)
 
-(** No leaf stands in an expression position. *)
-Inductive leaf_free_expression : Combination -> Prop :=
-| lfe_value : forall v, leaf_free_expression (Sm v)
-| lfe_app : forall e1 e2, leaf_free_expression e1 -> leaf_free_expression e2 ->
-    leaf_free_expression (Fk e1 e2).
+(** No leaf stands where a computation is expected. *)
+Inductive leaf_free : Combination -> Prop :=
+| leaf_free_value : forall v, leaf_free (Sm v)
+| leaf_free_app : forall e1 e2, leaf_free e1 -> leaf_free e2 ->
+    leaf_free (Fk e1 e2).
 
-Lemma rule_rewrite_leaf_free : forall f u, leaf_free_expression (rule_rewrite f u).
+Lemma rule_rewrite_leaf_free : forall f u, leaf_free (rule_rewrite f u).
 Proof.
   intros f u; destruct f as [|g|[|g|f0 f1] h]; try destruct u; cbn [rule_rewrite];
     repeat constructor.
 Qed.
 
-Lemma atomic_rewrite_leaf_free : forall f u, leaf_free_expression (atomic_rewrite f u).
+Lemma atomic_rewrite_leaf_free : forall f u, leaf_free (atomic_rewrite f u).
 Proof.
   intros f u; unfold atomic_rewrite; destruct (as_name_test f);
     [constructor|apply rule_rewrite_leaf_free].
 Qed.
 
-Lemma step_leaf_free : forall e, leaf_free_expression e -> leaf_free_expression (step e).
+Lemma step_leaf_free : forall e, leaf_free e -> leaf_free (step e).
 Proof.
   unfold step; intros e H; induction H as [v|e1 e2 H1 IH1 H2 IH2]; [constructor|].
   destruct H1 as [f|a b Ha Hb].
@@ -368,7 +544,7 @@ Proof.
   - cbn [step_with]; constructor; [exact IH1|exact H2].
 Qed.
 
-Lemma step_progress : forall e, leaf_free_expression e ->
+Lemma step_progress : forall e, leaf_free e ->
   (exists v, e = Sm v) \/ advances atomic_rewrite e (step e).
 Proof.
   unfold step; intros e H; induction H as [v|e1 e2 H1 IH1 H2 IH2]; [left; eauto|right].
@@ -382,7 +558,7 @@ Proof.
 Qed.
 
 Lemma expression_typed_leaf_free : forall AI e T,
-  infer_expression AI @ e ==> Sm T -> leaf_free_expression e.
+  infer_expression AI @ e ==> Sm T -> leaf_free e.
 Proof.
   intros AI e; induction e as [|u _|e1 IH1 e2 IH2]; intros T H.
   - pose proof (eval_deterministic _ _ H _ (infer_expression_leaf AI)); discriminate.
@@ -391,14 +567,14 @@ Proof.
     constructor; [eapply IH1; exact H1|eapply IH2; exact H2].
 Qed.
 
-(** Progress: each snapshot of a typed expression is a value or is
+(** Progress: each snapshot of a typed computation is a value or is
     rewritten at its first ready application. *)
 Lemma typed_progress : forall AI e T,
   infer_expression AI @ e ==> Sm T -> forall k,
   (exists v, steps k e = Sm v) \/ advances atomic_rewrite (steps k e) (steps (S k) e).
 Proof.
   intros AI e T H k.
-  assert (Hk : leaf_free_expression (steps k e)).
+  assert (Hk : leaf_free (steps k e)).
   { pose proof (expression_typed_leaf_free AI e T H) as H0; clear H.
     unfold steps; induction k as [|k IH]; [exact H0|].
     rewrite steps_with_S; apply step_leaf_free; exact IH. }
@@ -411,16 +587,16 @@ Qed.
 (* ===================================================================== *)
 (** * The small-step semantics as programs of the calculus.
 
-    [step_prog @ e ==> step e]: the program takes the expression [e] apart
-    as a tree and rebuilds it with its first ready application rewritten;
-    it never evaluates [e].  The only application it performs on parts of
-    [e] is a name test [name_test n @ u], which is one step of [step] and
-    always terminates.
+    [step_prog @ e ==> step e]: the program takes the encoded computation
+    [e] apart as a tree and rebuilds it with its first ready application
+    rewritten; it never runs [e].  The only application it performs on
+    parts of [e] is a name test [name_test n @ u], which is one step of
+    [step] and always terminates.
 
-    [bound_eval] acts on the expression [pair @ succ n @ e], that is the
-    tree [Fk (Fk (Sm pair) (Sm (succ n))) e]: it returns the expression
-    [pair @ n @ e'] where [e'] is [e] after one step.  On every other tree
-    (in particular at the count [zero]) it is the identity. *)
+    [bound_eval] acts on [Fk ('pair @@t succ n) e], the pending application
+    of [pair @ succ n] to the encoded computation [e]: it returns
+    [Fk ('pair @@t n) e'] where [e'] is [e] after one step.  On every other
+    tree (in particular at the count [zero]) it is the identity. *)
 
 From TreeTyping Require Import tree typing data_types.
 From Stdlib Require Import String Lia.
@@ -430,14 +606,6 @@ Open Scope string_scope.
 
 Definition stemT (x : Term) : Term := Val Lf @@ x.
 Definition forkT (x y : Term) : Term := Val Lf @@ x @@ y.
-
-(** Split an application to two arguments. *)
-Lemma app2_split : forall F x y r,
-  F @ x @r y ==> r -> exists v, F @ x ==> v /\ v @ y ==> r.
-Proof.
-  intros F x y r H; destruct (eval_pair_inv _ _ _ H) as [v1 [v2 [H1 [H2 H3]]]].
-  inv_out H2; eauto.
-Qed.
 
 (** * One rewrite per rule *)
 
@@ -555,8 +723,8 @@ Definition atomic_prog := Eval cbn in proj1_sig atomic_prog_package.
 Lemma atomic_prog_eval : forall f u, atomic_prog @ f @r u ==> atomic_rewrite f u.
 Proof.
   intros f u.
-  destruct (app2_split _ _ _ _ (rule_prog_eval f u)) as [vr [Hr1 Hr2]].
-  destruct (app2_split _ _ _ _ (nt_prog_eval f u)) as [vn [Hn1 Hn2]].
+  destruct (eval_appl_inv _ _ _ (rule_prog_eval f u)) as [vr [Hr1 Hr2]].
+  destruct (eval_appl_inv _ _ _ (nt_prog_eval f u)) as [vn [Hn1 Hn2]].
   unfold atomic_rewrite.
   destruct (as_name_test f) as [n|];
     unfold atomic_prog; cbv -[rule_prog nt_prog rule_rewrite test_answer];
@@ -565,7 +733,7 @@ Qed.
 
 (** * One step
 
-    [step_prog_with r] traverses the expression: a leaf or a value is
+    [step_prog_with r] traverses the encoded computation: a leaf or a value is
     returned as is; at an application it looks at the operator, then at the
     argument, and rewrites the first ready application with [r]. *)
 
@@ -603,7 +771,7 @@ Proof.
     + unfold step_prog_with; eapply Z_unfold; cbv -[Z]; evaluate.
     + destruct e2 as [|u|c d].
       * unfold step_prog_with; eapply Z_unfold; cbv -[Z]; evaluate.
-      * destruct (app2_split _ _ _ _ (Hr f u)) as [vr [Hr1 Hr2]].
+      * destruct (eval_appl_inv _ _ _ (Hr f u)) as [vr [Hr1 Hr2]].
         unfold step_prog_with; eapply Z_unfold; cbv -[Z step_with]; evaluate.
       * unfold step_prog_with in *; eapply Z_unfold; cbv -[Z step_with]; evaluate.
     + unfold step_prog_with in *; eapply Z_unfold; cbv -[Z step_with]; evaluate.
@@ -617,7 +785,7 @@ Proof. apply step_prog_with_eval; exact atomic_prog_eval. Qed.
 
 (** * Bounded evaluation *)
 
-(** The count and the expression of [pair @ succ n @ e]; junk otherwise. *)
+(** The count and the computation of [Fk ('pair @@t succ n) e]; junk otherwise. *)
 Definition count_of (p : Combination) : Combination :=
   match p with
   | Fk (Fk _ (Sm (Fk (Sm (Fk _ (Fk _ n))) _))) _ => n
@@ -630,9 +798,9 @@ Definition expr_of (p : Combination) : Combination :=
   | _ => Lf
   end.
 
-(** The expression [pair @ c @ e]. *)
+(** The pending application of [pair @ c] to [e]. *)
 Definition pair_expr (c e : Combination) : Combination :=
-  Fk (Fk (Sm 'pair) (Sm c)) e.
+  Fk ('pair @@t c) e.
 
 Definition bound_eval_fn (stepf : Combination -> Combination) (p : Combination) :=
   if combination_eq_dec p (pair_expr (succ (count_of p)) (expr_of p))
@@ -739,14 +907,15 @@ Proof. intros p H; rewrite <- (bound_eval_fn_other step p H) at 2; apply bound_e
 
 
 (* ===================================================================== *)
-(** * Each step preserves expression typing; so does bounded evaluation.
+(** * Each step preserves the typing of snapshots; so does bounded evaluation.
 
     The proof follows the cases of evaluation_preserves_typing (EPT) in
     soundness.v.  A step to a value is typed by EPT itself.  The steps that
-    produce applications ([S2], triage on a stem or a fork) are typed by the
-    same local lemmas that EPT uses for the premises of those rules.  The one
-    case where EPT uses the whole evaluation, a name test, is a single step
-    in [step], and is again covered by EPT. *)
+    produce pending applications ([S2], triage on a stem or a fork) are
+    typed by the inversions that EPT uses for those rules
+    ([S_app_typing_inv], [triage_application_typing]).  The one case where
+    EPT uses the whole evaluation, a name test, is a single step in
+    [step], and is again covered by EPT. *)
 
 From TreeTyping Require Import tree typing soundness booleans data_types.
 
@@ -757,67 +926,48 @@ Hypothesis Hsound : ontology_sound_by_typing AI.
 (** A step to a value is typed by evaluation_preserves_typing. *)
 Lemma value_step_typing : forall f u w T,
   f @ u ==> w ->
-  infer_expression AI @ (f @ u) ==> Sm T ->
+  infer_expression AI @ (f @@t u) ==> Sm T ->
   infer_expression AI @ Sm w ==> Sm T.
 Proof using Hsound.
   intros f u w T Hw H; apply infer_expression_stem.
   eapply evaluation_preserves_typing;
-    [apply ontology_sound_by_typing_value; exact Hsound|eassumption|eassumption].
+    [apply ontology_sound_by_typing_value; exact Hsound|exact Hw|apply infer_expression_ap, H].
 Qed.
 
 Lemma ready_step_typing : forall f u T,
-  infer_expression AI @ (f @ u) ==> Sm T ->
+  infer_expression AI @ (f @@t u) ==> Sm T ->
   infer_expression AI @ atomic_rewrite f u ==> Sm T.
 Proof using Hsound.
   intros f u T H; unfold atomic_rewrite.
   destruct (as_name_test f) as [n|] eqn:Ename.
   - apply as_name_test_some in Ename; subst f.
     eapply value_step_typing; [apply test_answer_eval|exact H].
-  - destruct f as [|g|[|g|f0 f1] h]; cbn [rule_rewrite].
+  - destruct (has_type_ap_inv _ _ _ _ (proj1 (infer_expression_ap _ _ _ _) H))
+      as [F [U [Hf [Hu HA]]]].
+    destruct f as [|g|[|g|f0 f1] h]; cbn [rule_rewrite].
     + eapply value_step_typing; [constructor|exact H].
     + eapply value_step_typing; [constructor|exact H].
     + eapply value_step_typing; [constructor|exact H].
-    + (* [S2[g,h] @ u] to [Fk (g @ u) (h @ u)] *)
-      destruct (infer_expression_fork_inv AI _ _ _ H)
-        as [FT [U [Hfunction [Hargument Happ]]]].
-      apply infer_expression_stem_inv in Hfunction.
-      apply infer_expression_stem_inv in Hargument.
-      destruct (infer_fork_inv AI _ _ _ Hfunction)
-        as [GT [F [Hleft [Hf Hconstruction]]]].
-      destruct (infer_stem_inv AI _ _ Hleft) as [G [-> Hg]].
-      destruct (tagged_decide ('S2[G,F])) as [[C [N Htag]]|Hplain].
-      * (* abstract or function introduction *)
-        eapply plain_tagged_redex_typing; eauto using ontology_sound_by_typing_plain.
-      * apply app_stem_inv in Hconstruction.
-        pose proof (type_app_stem_structural_inv AI (type_app AI) _ _ _
-          Hplain Hconstruction) as ->.
-        assert (HA : abstract_case @ ('S2[G,F]) ==> Lf).
-        { unfold abstract_case; apply type_app_abstract_case_S_none; exact Hplain. }
-        pose proof (app_plain_inv AI _ _ _ HA Happ) as HD.
-        destruct (default_S_inv _ _ _ _ _ _ HD) as [VG [VF [HG [HF HR]]]].
+    + (* [S2[g,h] @ u] to [Fk (g @@t u) (h @@t u)] *)
+      destruct (S_app_typing_inv AI g h u F U T Hf Hu HA)
+        as [[G [H' [VG [VH [Hg [Hh [HG [HH HR]]]]]]]]
+           |[c [C [N [E [-> [Hc [Hh [HI HE]]]]]]]]].
+      * eapply infer_expression_fork; [| |exact HR];
+          apply infer_expression_ap; eapply has_type_ap; eassumption.
+      * (* tagged: the carrier [c] stands for the value *)
         eapply infer_expression_fork.
-        -- eapply infer_expression_fork;
-             [apply infer_expression_stem; exact Hg|
-              apply infer_expression_stem; exact Hargument|exact HG].
-        -- eapply infer_expression_fork;
-             [apply infer_expression_stem; exact Hf|
-              apply infer_expression_stem; exact Hargument|exact HF].
-        -- exact HR.
+        -- apply infer_expression_ap; eapply has_type_ap; [| exact Hu | apply app_K].
+           eapply infer_fork; [apply inf_leaf|exact Hc|].
+           apply app_stem, type_app_stem_structural; intros C' N' Heq; discriminate Heq.
+        -- apply infer_expression_ap; eapply has_type_ap;
+             [exact Hh|exact Hu|apply tagged_part_type].
+        -- exact (ontology_sound_by_typing_plain AI Hsound C N E U T HI HE).
     + (* triage *)
-      destruct u as [|x|x y].
+      pose proof (triage_application_typing AI f0 f1 h u F U T Hf Hu HA) as HR.
+      destruct u as [|x|x y]; cbn [reduct_typed] in HR.
       * eapply value_step_typing; [constructor|exact H].
-      * destruct (triage_application_typing AI f0 f1 h (Sm x) T H)
-          as [X [Hx [HS|[HQ|[-> HC]]]]].
-        -- destruct HS as [F0 [F1 [F2 [HF HC]]]].
-           exact (structural_triage_reduct_typing AI f0 f1 h F0 F1 F2 (Sm x) X T HF Hx HC).
-        -- exact (query_triage_reduct_typing AI f0 f1 h (Sm x) T X HQ Hx).
-        -- exact (children_reduct_typing AI f0 f1 h (Sm x) X HC Hx).
-      * destruct (triage_application_typing AI f0 f1 h (Fk x y) T H)
-          as [X [Hx [HS|[HQ|[-> HC]]]]].
-        -- destruct HS as [F0 [F1 [F2 [HF HC]]]].
-           exact (structural_triage_reduct_typing AI f0 f1 h F0 F1 F2 (Fk x y) X T HF Hx HC).
-        -- exact (query_triage_reduct_typing AI f0 f1 h (Fk x y) T X HQ Hx).
-        -- exact (children_reduct_typing AI f0 f1 h (Fk x y) X HC Hx).
+      * apply infer_expression_ap; exact HR.
+      * exact (proj2 (infer_expression_enc AI (h @ x @r y) T) HR).
 Qed.
 
 Lemma step_preserves_expression_typing : forall e T,
@@ -844,7 +994,7 @@ Proof using Hsound.
   apply IHk, step_preserves_expression_typing, H.
 Qed.
 
-(** * Bounded evaluation preserves expression typing *)
+(** * Bounded evaluation preserves the typing of snapshots *)
 
 Hypothesis Hnumber : supports_number AI.
 
@@ -890,22 +1040,20 @@ End StepTyping.
 
 
 (* ===================================================================== *)
-(** * Snapshots: quoted expressions, their value types, and their sizes.
+(** * Snapshots as values: their value types, and their sizes.
 
-    An expression is a tree, so it can be read as a value: this reading is
-    quotation, with no encoding.  Its value type is the expression with each
-    value replaced by its type ([quoted_type]); for example the expression
-    [f @ u] has value type [Fk (Sm F) (Sm U)].  This type expression plays
-    the role of a code type: evaluating it, read as an expression, gives
-    the expression type.  The step program and bounded evaluation act on
-    quoted expressions, and queries such as [size] observe them.
+    A snapshot is a tree, and so a value that programs take as an
+    argument.  Its value type mirrors it: it is the snapshot with each
+    value replaced by its type ([encoding_type]); for example the encoding
+    [f @@t u] has value type [Fk (Sm F) (Sm U)].  The step program and
+    bounded evaluation act on snapshots, and queries such as [size]
+    observe them.
 
     Results:
-    - [quoted_type_infer]: a quoted expression has its quoted type as value
-      type; every expression with an expression type has one.
-    - [size_on_snapshots]: [size] applied to every snapshot with an
-      expression type has expression type [Nat] and computes its node
-      count.
+    - [encoding_type_infer]: a snapshot has its encoding type as value
+      type; every typed snapshot has one.
+    - [size_on_snapshots]: [size] applied to every typed snapshot has type
+      [Nat] and computes its node count.
     - three examples: a loop that negates and recurses (snapshots cycle,
       size bounded); dither (pending negations, size grows linearly);
       minimisation searching for [n = succ n] (the count grows, and so does
@@ -917,47 +1065,47 @@ From Stdlib Require Import List String Arith Lia.
 Import ListNotations.
 Open Scope string_scope.
 
-(** * Quoted types *)
+(** * Encoding types *)
 
-Section Quotation.
+Section EncodingTypes.
 Variable AI : Decl.
 
-(** [quoted_type e X]: [X] is [e] with each value replaced by its type. *)
-Inductive quoted_type : Combination -> Combination -> Prop :=
-| quoted_value : forall v V, infer AI @ v ==> Sm V -> quoted_type (Sm v) (Sm V)
-| quoted_application : forall a b A B,
-    quoted_type a A -> quoted_type b B -> quoted_type (Fk a b) (Fk A B).
+(** [encoding_type e X]: [X] is [e] with each value replaced by its type. *)
+Inductive encoding_type : Combination -> Combination -> Prop :=
+| encoding_value : forall v V, infer AI @ v ==> Sm V -> encoding_type (Sm v) (Sm V)
+| encoding_application : forall a b A B,
+    encoding_type a A -> encoding_type b B -> encoding_type (Fk a b) (Fk A B).
 
-Lemma quoted_type_not_leaf : forall e X, quoted_type e X -> X <> Lf.
+Lemma encoding_type_not_leaf : forall e X, encoding_type e X -> X <> Lf.
 Proof. intros e X H; destruct H; discriminate. Qed.
 
-Lemma quoted_type_not_K1 : forall e X N, quoted_type e X -> X <> Fk Lf N.
+Lemma encoding_type_not_K1 : forall e X N, encoding_type e X -> X <> Fk Lf N.
 Proof.
   intros e X N H; destruct H as [|a b A B Ha Hb]; [discriminate|].
-  intro E; inversion E; subst; exact (quoted_type_not_leaf _ _ Ha eq_refl).
+  intro E; inversion E; subst; exact (encoding_type_not_leaf _ _ Ha eq_refl).
 Qed.
 
-(** A quoted application never has the shape of a tagged type. *)
-Lemma quoted_type_not_tagged : forall a b A B C N,
-  quoted_type a A -> quoted_type b B -> Fk A B <> 'tagged[C,N].
+(** The encoding type of a pending application never has the shape of a tagged type. *)
+Lemma encoding_type_not_tagged : forall a b A B C N,
+  encoding_type a A -> encoding_type b B -> Fk A B <> 'tagged[C,N].
 Proof.
   intros a b A B C N Ha Hb E; inversion E; subst.
   inversion Hb; subst.
-  match goal with H : quoted_type _ (Fk Lf N) |- _ =>
-    exact (quoted_type_not_K1 _ _ _ H eq_refl) end.
+  match goal with H : encoding_type _ (Fk Lf N) |- _ =>
+    exact (encoding_type_not_K1 _ _ _ H eq_refl) end.
 Qed.
 
-Lemma quoted_type_infer : forall e X, quoted_type e X -> infer AI @ e ==> Sm X.
+Lemma encoding_type_infer : forall e X, encoding_type e X -> infer AI @ e ==> Sm X.
 Proof.
   intros e X H; induction H.
   - apply infer_stem; assumption.
-  - eapply infer_fork; [exact IHquoted_type1|exact IHquoted_type2|].
+  - eapply infer_fork; [exact IHencoding_type1|exact IHencoding_type2|].
     apply app_stem, type_app_stem_structural.
-    intros C N; eapply quoted_type_not_tagged; eassumption.
+    intros C N; eapply encoding_type_not_tagged; eassumption.
 Qed.
 
-Lemma expression_quoted_type : forall e T,
-  infer_expression AI @ e ==> Sm T -> exists X, quoted_type e X.
+Lemma expression_encoding_type : forall e T,
+  infer_expression AI @ e ==> Sm T -> exists X, encoding_type e X.
 Proof.
   induction e as [|v _|a IHa b IHb]; intros T H.
   - pose proof (eval_deterministic _ _ H _ (infer_expression_leaf AI)); discriminate.
@@ -967,15 +1115,34 @@ Proof.
     exists (Fk X Y); constructor; assumption.
 Qed.
 
-(** Every expression with an expression type, read as a value, has a value type. *)
+(** Every typed snapshot has a value type. *)
 Lemma expression_value_type : forall e T,
   infer_expression AI @ e ==> Sm T -> exists X, infer AI @ e ==> Sm X.
 Proof.
-  intros e T H; destruct (expression_quoted_type e T H) as [X HX].
-  exists X; apply quoted_type_infer; exact HX.
+  intros e T H; destruct (expression_encoding_type e T H) as [X HX].
+  exists X; apply encoding_type_infer; exact HX.
 Qed.
 
-End Quotation.
+(** Any value with the encoding type of a typed snapshot is a snapshot of
+    the same type. *)
+Lemma encoding_type_determines : forall e X T,
+  encoding_type e X -> infer_expression AI @ e ==> Sm T ->
+  forall e', infer AI @ e' ==> Sm X -> infer_expression AI @ e' ==> Sm T.
+Proof.
+  intros e X T H; revert T; induction H as [v V Hv|a b A B Ha IHa Hb IHb];
+    intros T He e' He'.
+  - apply infer_expression_stem_inv in He.
+    pose proof (eval_deterministic _ _ He _ Hv) as E; inversion E; subst.
+    destruct (infer_stem_result_inv AI _ _ He') as [t [-> Ht]].
+    apply infer_expression_stem; exact Ht.
+  - destruct (infer_expression_fork_inv AI _ _ _ He) as [T1 [T2 [H1 [H2 Happ]]]].
+    destruct (infer_plain_fork_inv AI e' A B
+      (fun C N => encoding_type_not_tagged a b A B C N Ha Hb) He')
+      as [l [r [-> [Hl Hr]]]].
+    eapply infer_expression_fork; [eapply IHa; eassumption|eapply IHb; eassumption|exact Happ].
+Qed.
+
+End EncodingTypes.
 
 (** * Size on snapshots *)
 
@@ -984,27 +1151,27 @@ Variable AI : Decl.
 Hypothesis Hq : supports_queries AI.
 Hypothesis Hn : supports_number AI.
 
-(** [size] applies to every quoted expression that has a value type. *)
-Lemma size_on_quoted : forall e X,
+(** [size] applies to every snapshot that has a value type. *)
+Lemma size_on_value_typed : forall e X,
   infer AI @ e ==> Sm X ->
-  infer_expression AI @ (size @ e) ==> Sm ('Nat) /\ size @ e ==> numeral (tree_size e).
+  has_type AI (size @ e) ('Nat) /\ size @ e ==> numeral (tree_size e).
 Proof using Hq Hn.
   intros e X H; split; [eapply size_application_typed; eassumption|apply size_eval].
 Qed.
 
 Lemma size_on_snapshots : forall e T k,
   infer_expression AI @ steps k e ==> Sm T ->
-  infer_expression AI @ (size @ steps k e) ==> Sm ('Nat) /\
+  has_type AI (size @ steps k e) ('Nat) /\
   size @ steps k e ==> numeral (tree_size (steps k e)).
 Proof using Hq Hn.
   intros e T k H.
   destruct (expression_value_type AI (steps k e) T H) as [X HX].
-  eapply size_on_quoted; exact HX.
+  eapply size_on_value_typed; exact HX.
 Qed.
 
 (** ** Rule-by-rule snapshots *)
 
-(** The first ready application of an expression, in evaluation order. *)
+(** The first ready application of an encoded computation, in evaluation order. *)
 Fixpoint ready_of (e : Combination) : option (Combination * Combination) :=
   match e with
   | Fk (Sm f) (Sm u) => Some (f, u)
@@ -1036,10 +1203,10 @@ Lemma value_typed_stem : forall a W,
   infer AI @ Sm a ==> Sm W -> exists A, infer AI @ a ==> Sm A.
 Proof. intros a W H; destruct (infer_stem_inv AI _ _ H) as [A [_ Ha]]; eauto. Qed.
 
-Lemma rule_rewrite_quoted : forall f u F U,
+Lemma rule_rewrite_encoding_type : forall f u F U,
   infer AI @ f ==> Sm F -> infer AI @ u ==> Sm U ->
   (forall g, f = Sm g -> exists W, infer AI @ Fk g u ==> Sm W) ->
-  exists X, quoted_type AI (rule_rewrite f u) X.
+  exists X, encoding_type AI (rule_rewrite f u) X.
 Proof.
   intros f u F U Hf Hu Hc.
   destruct f as [|g|[|g|f0 f1] h]; cbn [rule_rewrite].
@@ -1049,40 +1216,43 @@ Proof.
     eexists; constructor; exact HY.
   - destruct (value_typed_subtrees _ _ _ Hf) as [[SG HSG] [H' HH]].
     destruct (value_typed_stem _ _ HSG) as [G HG].
-    eexists; repeat first [apply quoted_application | apply quoted_value; eassumption].
+    eexists; repeat first [apply encoding_application | apply encoding_value; eassumption].
   - destruct (value_typed_subtrees _ _ _ Hf) as [[L HL] [F2 HF2]].
     destruct (value_typed_subtrees _ _ _ HL) as [[F0 HF0] [F1 HF1]].
     destruct u as [|x|x y].
     + eexists; constructor; exact HF0.
     + destruct (value_typed_stem _ _ Hu) as [X HX].
-      eexists; repeat first [apply quoted_application | apply quoted_value; eassumption].
+      eexists; repeat first [apply encoding_application | apply encoding_value; eassumption].
     + destruct (value_typed_subtrees _ _ _ Hu) as [[X HX] [Y HY]].
-      eexists; repeat first [apply quoted_application | apply quoted_value; eassumption].
+      eexists; repeat first [apply encoding_application | apply encoding_value; eassumption].
 Qed.
 
 
 End SnapshotSizes.
 
-(** ** A rule-by-rule snapshot of a name test without expression type *)
+(** ** A rule-by-rule snapshot of a name test without type *)
 
 (** [eval_bounded] and [eval_bounded_sound] are in soundness.v. *)
 
-(** The IsNamed test [is_named bool_nm] applied to ['tt] has an
-    expression type, but its first rule-by-rule snapshot has none: the
-    snapshot exposes the raw name test, which is typed structurally and
-    so cannot be applied at the abstract type ['Bool].  The snapshot of
-    [step] is instead the answer.  The declarations add the IsNamed row to
+(** The IsNamed test [is_named bool_nm] applied to ['tt] has a type, but
+    the first rule-by-rule snapshot of its encoding has none: the snapshot
+    exposes the raw name test, which is typed structurally and so cannot
+    be applied at the abstract type ['Bool].  The snapshot of [step] is
+    instead the answer.  The declarations add the IsNamed row to
     [bool_ontology]. *)
 Definition bool_is_named_ontology :=
   extend (to_tree (tcase (Val is_named_nm) (Val ('K1 is_named_abstractor)))) bool_ontology.
 Lemma name_test_snapshot_untyped :
-  (exists T, infer_expression bool_is_named_ontology @ (is_named bool_nm @ 'tt) ==> Sm T) /\
-  ~ (exists T, infer_expression bool_is_named_ontology @ (rule_steps 1 (is_named bool_nm @ 'tt)) ==> Sm T).
+  (exists T, has_type bool_is_named_ontology (is_named bool_nm @ 'tt) T) /\
+  ~ (exists T, infer_expression bool_is_named_ontology @
+                 rule_steps 1 (enc (is_named bool_nm @ 'tt)) ==> Sm T).
 Proof.
   split.
-  - eexists; apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
+  - eexists; apply (infer_expression_enc bool_is_named_ontology (is_named bool_nm @ 'tt)).
+    apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
   - intros [T H].
-    assert (HL : infer_expression bool_is_named_ontology @ (rule_steps 1 (is_named bool_nm @ 'tt)) ==> Lf)
+    assert (HL : infer_expression bool_is_named_ontology @
+                   rule_steps 1 (enc (is_named bool_nm @ 'tt)) ==> Lf)
       by (apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity).
     pose proof (eval_deterministic _ _ H _ HL); discriminate.
 Qed.
@@ -1098,16 +1268,16 @@ Definition loop_body := Eval cbn in to_tree
 Definition loop_function := lam loop_body typed_neg.
 Definition loop := 'fix[loop_function].
 
-Lemma loop_tt_ff : steps 177 (loop @ 'tt) = loop @ 'ff.
+Lemma loop_tt_ff : steps 177 (enc (loop @ 'tt)) = enc (loop @ 'ff).
 Proof. vm_compute; reflexivity. Qed.
 
-Lemma loop_ff_tt : steps 180 (loop @ 'ff) = loop @ 'tt.
+Lemma loop_ff_tt : steps 180 (enc (loop @ 'ff)) = enc (loop @ 'tt).
 Proof. vm_compute; reflexivity. Qed.
 
-Lemma loop_cycle : steps 357 (loop @ 'tt) = loop @ 'tt.
+Lemma loop_cycle : steps 357 (enc (loop @ 'tt)) = enc (loop @ 'tt).
 Proof.
   change 357 with (177 + 180); unfold steps; rewrite steps_with_add.
-  fold (steps 177 (loop @ 'tt)); rewrite loop_tt_ff; exact loop_ff_tt.
+  fold (steps 177 (enc (loop @ 'tt))); rewrite loop_tt_ff; exact loop_ff_tt.
 Qed.
 
 Lemma steps_period : forall p e, steps p e = e ->
@@ -1120,11 +1290,11 @@ Qed.
 
 Definition loop_bound := 3552.
 
-Lemma loop_window : forallb (fun r => Nat.leb (tree_size (steps r (loop @ 'tt))) loop_bound)
+Lemma loop_window : forallb (fun r => Nat.leb (tree_size (steps r (enc (loop @ 'tt)))) loop_bound)
   (seq 0 357) = true.
 Proof. vm_compute; reflexivity. Qed.
 
-Lemma loop_size_bounded : forall k, tree_size (steps k (loop @ 'tt)) <= loop_bound.
+Lemma loop_size_bounded : forall k, tree_size (steps k (enc (loop @ 'tt))) <= loop_bound.
 Proof.
   intro k.
   rewrite (Nat.div_mod k 357) by lia; rewrite Nat.mul_comm.
@@ -1137,12 +1307,13 @@ Qed.
 (** ** dither: pending negations
 
     [dither] is the query of dither_minimisation.v.  Every 92 steps one more
-    negation [neg] waits for the value of [dither @ tt], which reappears
-    unchanged. *)
+    negation [neg] waits for the value of [dither @ tt], whose encoding
+    reappears unchanged: [pending (S k)] applies [neg] to the pending
+    computation [pending k]. *)
 From TreeTyping Require Import dither_minimisation.
 Fixpoint pending (k : nat) : Combination :=
   match k with
-  | O => dither @ 'tt
+  | O => enc (dither @ 'tt)
   | S k => Fk (Sm neg) (pending k)
   end.
 
@@ -1164,10 +1335,10 @@ Proof.
     rewrite (proj1 (IH f e H')); eauto.
 Qed.
 
-Lemma dither_round : steps 92 (dither @ 'tt) = pending 1.
+Lemma dither_round : steps 92 (enc (dither @ 'tt)) = pending 1.
 Proof. vm_compute; reflexivity. Qed.
 
-Lemma dither_round_forks : forks_upto 92 (dither @ 'tt) = true.
+Lemma dither_round_forks : forks_upto 92 (enc (dither @ 'tt)) = true.
 Proof. vm_compute; reflexivity. Qed.
 
 Lemma forks_upto_spec : forall p e, forks_upto p e = true ->
@@ -1178,7 +1349,7 @@ Proof.
   destruct (steps i e); try discriminate; eauto.
 Qed.
 
-Lemma dither_pending : forall k, steps (k * 92) (dither @ 'tt) = pending k.
+Lemma dither_pending : forall k, steps (k * 92) (enc (dither @ 'tt)) = pending k.
 Proof.
   assert (Hctx : forall k,
     steps 92 (pending k) = pending (S k) /\
@@ -1200,22 +1371,22 @@ Proof.
 Qed.
 
 Lemma dither_size_grows : forall k,
-  tree_size (steps (k * 92) (dither @ 'tt)) = 339 + 86 * k.
+  tree_size (steps (k * 92) (enc (dither @ 'tt))) = 339 + 86 * k.
 Proof. intro k; rewrite dither_pending; apply tree_size_pending. Qed.
 
-(** Every round [pending k] of the query [dither @ tt] has expression type
-    [Bool], at declarations that support queries and Booleans. *)
+(** Every round [pending k] of the query [dither @ tt] has type [Bool], at
+    declarations that support queries and Booleans. *)
 Lemma dither_pending_typed : forall (AI : Decl) k,
   supports_queries AI -> supports_booleans AI ->
   infer_expression AI @ pending k ==> Sm ('Bool).
 Proof.
   intros AI k HQ HB; induction k as [|k IH]; cbn [pending].
-  - exact (dither_tt_infer_expression AI HQ HB).
+  - apply infer_expression_enc, dither_tt_typed; assumption.
   - eapply infer_expression_fork;
       [apply infer_expression_stem; apply neg_infer; exact HB|exact IH|apply neg_type_app].
 Qed.
 
-(** Every snapshot of the function-typed [dither_fn @ tt] has expression type [Bool], for
+(** Every snapshot of the function-typed [dither_fn @ tt] has type [Bool], for
     declarations sound by typing that support the Booleans (for example
     [bool_ontology], [bool_ontology_sound_by_typing]).  A step preserves
     typing only under soundness by typing; declarations that support
@@ -1223,19 +1394,19 @@ Qed.
     ([queries_not_sound_by_typing], [updates_not_sound_by_typing]). *)
 Lemma dither_fn_snapshots_typed : forall (AI : Decl) k,
   ontology_sound_by_typing AI -> supports_booleans AI ->
-  infer_expression AI @ steps k (dither_fn @ 'tt) ==> Sm ('Bool).
+  infer_expression AI @ steps k (enc (dither_fn @ 'tt)) ==> Sm ('Bool).
 Proof.
   intros AI k Hs Hb.
   apply steps_preserve_expression_typing; [exact Hs|].
-  exact (dither_fn_tt_infer_expression AI Hb).
+  apply infer_expression_enc, dither_fn_tt_typed; exact Hb.
 Qed.
 
 (** [size] is a query, it measures the snapshots of
-    [dither @ tt], and it applies to every typed expression. *)
+    [dither @ tt], and it applies to every typed snapshot. *)
 Theorem size_on_expressions :
-  (forall k, size @ steps (k * 92) (dither @ 'tt) ==> numeral (339 + 86 * k)) /\
+  (forall k, size @ steps (k * 92) (enc (dither @ 'tt)) ==> numeral (339 + 86 * k)) /\
   (forall e T, infer_expression paper_ontology @ e ==> Sm T ->
-     infer_expression paper_ontology @ (size @ e) ==> Sm ('Nat)).
+     has_type paper_ontology (size @ e) ('Nat)).
 Proof.
   pose proof paper_ontology_supports_queries as Hq.
   pose proof paper_ontology_supports_number as Hn.
@@ -1243,20 +1414,21 @@ Proof.
   - intro k; rewrite <- dither_size_grows; apply size_eval.
   - intros e T H.
     destruct (expression_value_type paper_ontology e T H) as [X HX].
-    exact (proj1 (size_on_quoted paper_ontology Hq Hn e X HX)).
+    exact (proj1 (size_on_value_typed paper_ontology Hq Hn e X HX)).
 Qed.
 
 (** The ontology of the paper is not sound by typing, and a snapshot of a
-    typed expression can be untyped: after 165 steps, [size @ tt] exposes
+    typed computation can be untyped: after 165 steps, [size @ tt] exposes
     the triage carrier of [size] at the abstract type [Bool].  Computed. *)
 Lemma size_snapshot_untyped :
-  infer_expression paper_ontology @ (size @ 'tt) ==> Sm ('Nat) /\
-  ~ (exists T, infer_expression paper_ontology @ (steps 165 (size @ 'tt)) ==> Sm T).
+  has_type paper_ontology (size @ 'tt) ('Nat) /\
+  ~ (exists T, infer_expression paper_ontology @ steps 165 (enc (size @ 'tt)) ==> Sm T).
 Proof.
   split.
-  - apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
+  - apply (infer_expression_enc paper_ontology (size @ 'tt)).
+    apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
   - intros [T H].
-    assert (HL : infer_expression paper_ontology @ (steps 165 (size @ 'tt)) ==> Lf)
+    assert (HL : infer_expression paper_ontology @ steps 165 (enc (size @ 'tt)) ==> Lf)
       by (apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity).
     pose proof (eval_deterministic _ _ H _ HL); discriminate.
 Qed.
@@ -1271,7 +1443,7 @@ Qed.
 Definition pred_body := Eval cbn in to_tree
   (\"n" (Val typed_equal @@ Ref "n" @@ (Val successor_function @@ Ref "n"))).
 Definition pred := lam pred_body zero.
-Definition search := minimisation_fn @ pred @r zero.
+Definition search := enc (minimisation_fn @ pred @r zero).
 
 Definition calls_pred (e : Combination) (k : nat) : bool :=
   match ready_of e with
@@ -1383,7 +1555,7 @@ Definition mid_step := step_with mid_rewrite.
 Definition mid_steps := steps_with mid_rewrite.
 
 Lemma mid_steps_agree : forall e v,
-  e ==> v <-> exists k, mid_steps k e = Sm v.
+  run e v <-> exists k, mid_steps k e = Sm v.
 Proof. exact (steps_with_agree mid_rewrite mid_rewrite_ok). Qed.
 
 
@@ -2018,11 +2190,11 @@ Proof. vm_compute; reflexivity. Qed.
 
 (** Every name test runs to its answer at the middle granularity, and no
     step of the run builds a value of the shape of a tagged value. *)
-Lemma name_test_runs_well : forall n u, runs_well (name_test n @ u).
+Lemma name_test_runs_well : forall n u, runs_well (name_test n @@t u).
 Proof.
   intros n u.
   pose (sg := fun i => if Nat.eqb i 0 then n else u).
-  assert (E : inst sg as_name_test_sym = name_test n @ u).
+  assert (E : inst sg as_name_test_sym = name_test n @@t u).
   { unfold as_name_test_sym; cbn [inst]; rewrite inst_sname_test; reflexivity. }
   rewrite <- E; exact (check_sound _ _ _ _ name_test_tree_check sg).
 Qed.
@@ -2031,15 +2203,15 @@ Qed.
 (* ===================================================================== *)
 (** * Queries on the snapshots of the middle granularity.
 
-    Every snapshot of [mid_steps] from a typed expression has a value type,
-    even inside a name test, where it has no expression type
+    Every snapshot of [mid_steps] from a typed computation has a value type,
+    even inside a name test, where it has no type
     ([mid_snapshots_value_typed], for declarations sound by typing).  [size]
     applies with type [Nat] to every snapshot with a value type
     ([size_on_mid_snapshots]); declarations that support queries are not
     sound by typing ([queries_not_sound_by_typing]), so the two are stated
     separately.
 
-    Outside name tests a snapshot keeps its expression type (each step is a
+    Outside name tests a snapshot keeps its type (each step is an
     evaluation rule, or goes straight to the value of an application).
     Inside a name test it keeps a value type: every value it builds is
     either a fork that is not of the shape of a tagged value
@@ -2082,7 +2254,7 @@ Qed.
 
 
 Lemma ready_decompose : forall e f u, ready_of e = Some (f, u) ->
-  exists c, e = plug c (f @ u).
+  exists c, e = plug c (f @@t u).
 Proof.
   induction e as [|a _|e1 IH1 e2 IH2]; intros f u H; cbn in H; try discriminate.
   destruct e1 as [|g|a b]; try discriminate.
@@ -2127,27 +2299,27 @@ Proof.
     eapply infer_expression_fork; [exact H1|apply Hy; exact Hy'|exact Happ].
 Qed.
 
-Lemma plug_quoted : forall c x y X Y,
-  quoted_type AI (plug c x) X -> quoted_type AI y Y ->
-  exists Z, quoted_type AI (plug c y) Z.
+Lemma plug_encoding_type : forall c x y X Y,
+  encoding_type AI (plug c x) X -> encoding_type AI y Y ->
+  exists Z, encoding_type AI (plug c y) Z.
 Proof.
   induction c as [|c IH e2|f c IH]; intros x y X Y Hx Hy; cbn [plug] in *.
   - eauto.
   - inversion Hx; subst.
-    match goal with H : quoted_type _ (plug c x) _ |- _ =>
+    match goal with H : encoding_type _ (plug c x) _ |- _ =>
       destruct (IH _ _ _ _ H Hy) as [Z HZ] end.
     eexists; constructor; eassumption.
   - inversion Hx; subst.
-    match goal with H : quoted_type _ (plug c x) _ |- _ =>
+    match goal with H : encoding_type _ (plug c x) _ |- _ =>
       destruct (IH _ _ _ _ H Hy) as [Z HZ] end.
     eexists; constructor; eassumption.
 Qed.
 
-(** ** Steps outside name tests keep the expression type *)
+(** ** Steps outside name tests keep the type *)
 
 Lemma mid_ready_typing : forall f u T,
   as_name_test f = None ->
-  infer_expression AI @ (f @ u) ==> Sm T ->
+  infer_expression AI @ (f @@t u) ==> Sm T ->
   infer_expression AI @ mid_rewrite f u ==> Sm T.
 Proof using Hsound.
   intros f u T Hn H.
@@ -2229,10 +2401,10 @@ Proof.
   - eexists; apply plain_construction_typed; eassumption.
 Qed.
 
-Lemma mid_rewrite_quoted : forall f u F U,
+Lemma mid_rewrite_encoding_type : forall f u F U,
   infer AI @ f ==> Sm F -> infer AI @ u ==> Sm U ->
   bad_pair f u = false ->
-  exists X, quoted_type AI (mid_rewrite f u) X.
+  exists X, encoding_type AI (mid_rewrite f u) X.
 Proof.
   intros f u F U Hf Hu Hb; unfold mid_rewrite.
   destruct (cmb_eqb f equal).
@@ -2240,14 +2412,14 @@ Proof.
   - destruct (cmb_eqb f (equal1 (decode f))).
     + eexists; constructor; apply infer_tag_free;
         destruct (cmb_eqb (decode f) u); reflexivity.
-    + eapply rule_rewrite_quoted; [exact Hf|exact Hu|].
+    + eapply rule_rewrite_encoding_type; [exact Hf|exact Hu|].
       intros g ->; destruct (infer_stem_inv AI _ _ Hf) as [G [_ HG]].
       eapply construction_typed; eassumption.
 Qed.
 
-Lemma mid_step_quoted : forall e X,
-  quoted_type AI e X -> bad e = false ->
-  exists X', quoted_type AI (mid_step e) X'.
+Lemma mid_step_encoding_type : forall e X,
+  encoding_type AI e X -> bad e = false ->
+  exists X', encoding_type AI (mid_step e) X'.
 Proof.
   induction e as [|v _|a IHa b IHb]; intros X H Hb; [inversion H|exists X; exact H|].
   inversion H as [|a' b' A B Ha Hb']; subst.
@@ -2255,8 +2427,8 @@ Proof.
   - inversion Ha as [f' F HF|]; subst.
     destruct b as [|u|b1 b2]; [inversion Hb'| |].
     + inversion Hb' as [u' U HU|]; subst.
-      apply (mid_rewrite_quoted f u F U HF HU).
-      rewrite <- (bad_ready (f @ u) f u); [exact Hb|reflexivity].
+      apply (mid_rewrite_encoding_type f u F U HF HU).
+      rewrite <- (bad_ready (f @@t u) f u); [exact Hb|reflexivity].
     + assert (Hb2 : bad (Fk b1 b2) = false).
       { unfold bad in *; cbn [ready_of] in Hb; exact Hb. }
       destruct (IHb _ Hb' Hb2) as [B' HB'].
@@ -2289,27 +2461,27 @@ Proof.
 Qed.
 
 
-Lemma name_test_quoted : forall n u T j,
-  infer_expression AI @ (name_test n @ u) ==> Sm T ->
-  exists X, quoted_type AI (mid_steps j (name_test n @ u)) X.
+Lemma name_test_encoding_type : forall n u T j,
+  infer_expression AI @ (name_test n @@t u) ==> Sm T ->
+  exists X, encoding_type AI (mid_steps j (name_test n @@t u)) X.
 Proof.
   intros n u T j H.
-  destruct (expression_quoted_type AI _ _ H) as [X0 H0].
+  destruct (expression_encoding_type AI _ _ H) as [X0 H0].
   destruct (name_test_runs_well n u) as [Hbad _].
   induction j as [|j IH]; [exists X0; exact H0|].
   destruct IH as [X HX].
   unfold mid_steps in *; rewrite steps_with_S; fold mid_step.
-  eapply mid_step_quoted; [exact HX|apply Hbad].
+  eapply mid_step_encoding_type; [exact HX|apply Hbad].
 Qed.
 
 Lemma name_test_answer : forall n u v j T,
-  infer_expression AI @ (name_test n @ u) ==> Sm T ->
-  mid_steps j (name_test n @ u) = Sm v ->
+  infer_expression AI @ (name_test n @@t u) ==> Sm T ->
+  mid_steps j (name_test n @@t u) = Sm v ->
   infer_expression AI @ Sm v ==> Sm T.
 Proof using Hsound.
   intros n u v j T H E.
   assert (Hv : name_test n @ u ==> v)
-    by (apply (proj2 (mid_steps_agree _ _)); exists j; exact E).
+    by (apply run_ap, (proj2 (mid_steps_agree _ _)); exists j; exact E).
   eapply value_step_typing; eassumption.
 Qed.
 
@@ -2318,14 +2490,14 @@ Qed.
 Definition snapshot_ok (e : Combination) : Prop :=
   (exists T, infer_expression AI @ e ==> Sm T) \/
   (exists c n u j T,
-     infer_expression AI @ plug c (name_test n @ u) ==> Sm T /\
-     e = plug c (mid_steps j (name_test n @ u)) /\
-     is_fork (mid_steps j (name_test n @ u))).
+     infer_expression AI @ plug c (name_test n @@t u) ==> Sm T /\
+     e = plug c (mid_steps j (name_test n @@t u)) /\
+     is_fork (mid_steps j (name_test n @@t u))).
 
 Lemma name_test_continue : forall c n u j T,
-  infer_expression AI @ plug c (name_test n @ u) ==> Sm T ->
-  is_fork (mid_steps j (name_test n @ u)) ->
-  snapshot_ok (plug c (mid_steps (S j) (name_test n @ u))).
+  infer_expression AI @ plug c (name_test n @@t u) ==> Sm T ->
+  is_fork (mid_steps j (name_test n @@t u)) ->
+  snapshot_ok (plug c (mid_steps (S j) (name_test n @@t u))).
 Proof using Hsound.
   intros c n u j T H Hj.
   destruct (runs_well_shape _ (name_test_runs_well n u) (S j)) as [[v Ev]|Hf].
@@ -2343,26 +2515,26 @@ Proof using Hsound.
       * apply as_name_test_some in En; subst f.
         destruct (ready_decompose _ _ _ Er) as [c ->].
         unfold mid_step; rewrite plug_step by (eexists; eexists; reflexivity).
-        change (step_with mid_rewrite (name_test n @ u)) with (mid_steps 1 (name_test n @ u)).
+        change (step_with mid_rewrite (name_test n @@t u)) with (mid_steps 1 (name_test n @@t u)).
         apply (name_test_continue c n u 0 T H); eexists; eexists; reflexivity.
       * left; exists T; apply mid_step_typing; [exact H|].
         intros f' u' E; rewrite Er in E; inversion E; subst; exact En.
     + left; exists T; unfold mid_step; rewrite ready_none_step by exact Er; exact H.
   - unfold mid_step; rewrite plug_step by exact Hj; fold mid_step.
-    replace (mid_step (mid_steps j (name_test n @ u)))
-      with (mid_steps (S j) (name_test n @ u))
+    replace (mid_step (mid_steps j (name_test n @@t u)))
+      with (mid_steps (S j) (name_test n @@t u))
       by (unfold mid_steps, mid_step; rewrite steps_with_S; reflexivity).
     eapply name_test_continue; eassumption.
 Qed.
 
-Lemma snapshot_ok_quoted : forall e, snapshot_ok e -> exists X, quoted_type AI e X.
+Lemma snapshot_ok_encoding_type : forall e, snapshot_ok e -> exists X, encoding_type AI e X.
 Proof.
   intros e [[T H]|[c [n [u [j [T [H [-> Hj]]]]]]]].
-  - eapply expression_quoted_type; exact H.
-  - destruct (expression_quoted_type AI _ _ H) as [X0 H0].
+  - eapply expression_encoding_type; exact H.
+  - destruct (expression_encoding_type AI _ _ H) as [X0 H0].
     destruct (plug_typing _ _ _ H) as [X [HX _]].
-    destruct (name_test_quoted n u X j HX) as [Y HY].
-    eapply plug_quoted; eassumption.
+    destruct (name_test_encoding_type n u X j HX) as [Y HY].
+    eapply plug_encoding_type; eassumption.
 Qed.
 
 Lemma mid_snapshots_value_typed : forall e T k,
@@ -2374,8 +2546,8 @@ Proof using Hsound.
   { induction k as [|k IH]; [left; exists T; exact H|].
     unfold mid_steps in *; rewrite steps_with_S; fold mid_step.
     apply snapshot_ok_step, IH. }
-  destruct (snapshot_ok_quoted _ Hk) as [X HX].
-  exists X; apply quoted_type_infer; exact HX.
+  destruct (snapshot_ok_encoding_type _ Hk) as [X HX].
+  exists X; apply encoding_type_infer; exact HX.
 Qed.
 
 Hypothesis Hq : supports_queries AI.
@@ -2384,10 +2556,10 @@ Hypothesis Hn : supports_number AI.
 (** Queries observe every snapshot of evaluation, even inside a name test. *)
 Lemma size_on_mid_snapshots : forall e X k,
   infer AI @ mid_steps k e ==> Sm X ->
-  infer_expression AI @ (size @ mid_steps k e) ==> Sm ('Nat) /\
+  has_type AI (size @ mid_steps k e) ('Nat) /\
   size @ mid_steps k e ==> numeral (tree_size (mid_steps k e)).
 Proof using Hq Hn.
-  intros e X k H; eapply size_on_quoted; [exact Hq|exact Hn|exact H].
+  intros e X k H; eapply size_on_value_typed; [exact Hq|exact Hn|exact H].
 Qed.
 
 End MidTyping.
@@ -2395,19 +2567,31 @@ End MidTyping.
 
 (* ===================================================================== *)
 (* Part: patching during evaluation *)
-(** * Patching an expression paused in evaluation
+(** * Patching a computation paused in evaluation
 
-    An expression may be paused after any number of steps and patched by a
-    typed update; the patched snapshot keeps the type of the snapshot,
-    since updates preserve expression typing
-    ([update_preserves_expression_typing], patching.v).  As for
-    [size_on_snapshots], the typing of the snapshot is a premise: for
+    A computation may be paused after any number of steps and its snapshot
+    patched by a typed update; the patched snapshot keeps the type of the
+    snapshot.  An update preserves value types, and the value type of a
+    typed snapshot determines its type ([encoding_type_determines]).  As
+    for [size_on_snapshots], the typing of the snapshot is a premise: for
     declarations sound by typing it follows from the typing of the
-    original expression ([steps_preserve_expression_typing]), but the
-    paper's declarations support updates and so are not sound by typing
+    computation ([steps_preserve_expression_typing]), but the paper's
+    declarations support updates and so are not sound by typing
     ([updates_not_sound_by_typing]). *)
 
-From TreeTyping Require Import patching.
+From TreeTyping Require Import updates patching.
+
+Lemma update_preserves_snapshot_typing : forall (AI : Decl) u e e' T,
+  ontology_sound AI -> infer AI @ u ==> Sm ('Update) ->
+  infer_expression AI @ e ==> Sm T -> u @ e ==> e' ->
+  infer_expression AI @ e' ==> Sm T.
+Proof.
+  intros AI u e e' T Hsound Hu He Hupd.
+  destruct (expression_encoding_type AI e T He) as [X HX].
+  eapply encoding_type_determines; [exact HX|exact He|].
+  eapply abstract_update_preserves_typing;
+    [exact Hsound|exact Hu|apply encoding_type_infer; exact HX|exact Hupd].
+Qed.
 
 Lemma patch_during_evaluation : forall (AI : Decl) k e e' u e'' T,
   ontology_sound AI ->
@@ -2418,5 +2602,5 @@ Lemma patch_during_evaluation : forall (AI : Decl) k e e' u e'' T,
   infer_expression AI @ e'' ==> Sm T.
 Proof.
   intros AI k e e' u e'' T Hsound He -> Hu Hupd.
-  eapply update_preserves_expression_typing; eassumption.
+  eapply update_preserves_snapshot_typing; eassumption.
 Qed.

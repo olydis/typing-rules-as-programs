@@ -63,7 +63,7 @@ Lemma minimisation_unfold : forall p u v,
 Proof.
   intros p u v H; unfold minimisation_at at 1, fix_update; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|exact H].
-  eapply eval_c; eapply eval_appr; [apply tagged_update_eval|apply minimisation_body_eval].
+  eapply eval_c; [apply tagged_update_eval|apply minimisation_body_eval].
 Qed.
 
 Lemma minimisation_step_found : forall p r k, p @ k ==> 'tt ->
@@ -96,12 +96,12 @@ Qed.
 Lemma minimisation_next : forall p k v, p @ k ==> 'ff ->
   minimisation @ p @r seek_at (succ k) ==> v -> minimisation @ p @r seek_at k ==> v.
 Proof.
-  intros p k v H Hn; destruct (eval_pair_inv _ _ _ Hn) as [w [c [Hw [Hc Hv]]]].
+  intros p k v H Hn; destruct (eval_appl_inv _ _ _ Hn) as [w [Hw Hv]].
   pose proof (eval_deterministic _ _ Hw _ (minimisation_eval p)) as ->.
   eapply eval_appl; [apply minimisation_eval|].
   apply minimisation_unfold; unfold specialised_update; apply tagged_eval.
   eapply if_named_hit; [apply get_tagname_some|].
-  eapply minimisation_step_next; [exact H|]; inv_out Hc; exact Hv.
+  eapply minimisation_step_next; [exact H|exact Hv].
 Qed.
 
 (** At a value that is not a search position, [minimisation @ p] is the identity. *)
@@ -178,15 +178,15 @@ Theorem minimise_is_odd : forall (AI : Decl),
   supports_seek AI -> supports_updates AI -> supports_is_named AI ->
   supports_booleans AI -> supports_number AI ->
   minimisation @ is_odd @r seek_at zero ==> seek_at one /\
-  infer_expression AI @ (minimisation @ is_odd @r seek_at zero) ==> Sm ('Seek).
+  has_type AI (minimisation @ is_odd @r seek_at zero) ('Seek).
 Proof.
   intros AI HK HU HT HB HN; split; [exact minimise_is_odd_eval|].
-  eapply infer_expression_fork.
-  - eapply infer_expression_fork;
-      [apply infer_expression_stem; apply infer_tag_free; exact minimisation_tag_free
-      |apply infer_expression_stem; apply infer_is_odd; exact HB
+  has_type_intro.
+  - has_type_intro;
+      [apply infer_tag_free; exact minimisation_tag_free
+      |apply infer_is_odd; exact HB
       |apply minimisation_polymorphic; try assumption; apply type_app_Odd].
-  - apply infer_expression_stem; apply infer_seek_at; [exact HK|apply infer_zero; exact HN].
+  - apply infer_seek_at; [exact HK|apply infer_zero; exact HN].
   - apply type_app_Update.
 Qed.
 
@@ -206,7 +206,7 @@ Lemma dither_unfold_eval :
   ('decorate[dither_body, 'Kq 'tt] 'C tagged_query) @
     Z ('decorate[dither_body, 'Kq 'tt] 'C tagged_query) ==> 'S_q['Kq neg, dither].
 Proof.
-  apply eval_c; eapply eval_appr; [unfold tagged_query; evaluate|].
+  eapply eval_c; [unfold tagged_query; evaluate|].
   apply wait_eval; eapply eval_appl; [evaluate|apply dither_body_eval].
 Qed.
 
@@ -263,22 +263,22 @@ Qed.
 (** [dither @ tt :: Bool], and indeed [dither @ x :: Bool] at every typed [x]. *)
 Lemma dither_typed_at : forall (AI : Decl) x X,
   supports_queries AI -> supports_booleans AI -> infer AI @ x ==> Sm X ->
-  infer_expression AI @ (dither @ x) ==> Sm ('Bool).
+  has_type AI (dither @ x) ('Bool).
 Proof.
-  intros AI x X HQ HB Hx; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_dither; assumption.
-  - apply infer_expression_stem; exact Hx.
+  intros AI x X HQ HB Hx; has_type_intro.
+  - apply infer_dither; assumption.
+  - exact Hx.
   - apply type_app_Query.
 Qed.
-Lemma dither_tt_infer_expression : forall (AI : Decl),
+Lemma dither_tt_typed : forall (AI : Decl),
   supports_queries AI -> supports_booleans AI ->
-  infer_expression AI @ (dither @ 'tt) ==> Sm ('Bool).
+  has_type AI (dither @ 'tt) ('Bool).
 Proof. intros AI HQ HB; eapply dither_typed_at; [exact HQ|exact HB|apply tt_infer; exact HB]. Qed.
 
 Theorem dither_typed_no_value : forall (AI : Decl),
   supports_queries AI -> supports_booleans AI ->
-  infer_expression AI @ (dither @ 'tt) ==> Sm ('Bool) /\
+  has_type AI (dither @ 'tt) ('Bool) /\
   forall v, ~ (dither @ 'tt ==> v).
 Proof.
-  intros AI HQ HB; split; [exact (dither_tt_infer_expression AI HQ HB)|exact dither_tt_no_value].
+  intros AI HQ HB; split; [exact (dither_tt_typed AI HQ HB)|exact dither_tt_no_value].
 Qed.

@@ -378,7 +378,7 @@ Proof.
 Qed.
 
 Theorem paper_evaluation_preserves_typing :
-  forall e v T, e ==> v -> infer_expression paper_ontology @ e ==> Sm T ->
+  forall e v T, e ==> v -> has_type paper_ontology e T ->
     infer paper_ontology @ v ==> Sm T.
 Proof.
   intros e v T HE HI; exact (evaluation_preserves_typing _ e v T paper_ontology_sound HE HI).
@@ -387,12 +387,10 @@ Qed.
 (** The bare name test cannot be typed at a salary (computed). *)
 Lemma name_test_salary_untyped :
   infer paper_ontology @ salary zero ==> Sm ('Salary) /\
-  ~ (exists T, infer_expression paper_ontology @ (name_test salary_nm @ salary zero) ==> Sm T).
+  ~ (exists T, has_type paper_ontology (name_test salary_nm @ salary zero) T).
 Proof.
   split.
   - apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity.
-  - intros [T H].
-    assert (HL : infer_expression paper_ontology @ (name_test salary_nm @ salary zero) ==> Lf)
-      by (apply (eval_bounded_sound (Nat.pow 10 6)); vm_compute; reflexivity).
-    pose proof (eval_deterministic _ _ H _ HL); discriminate.
+  - intros [T H]; revert H.
+    apply (app_type_bounded_untyped _ (Nat.pow 10 6)); vm_compute; reflexivity.
 Qed.

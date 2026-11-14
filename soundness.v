@@ -88,34 +88,26 @@ with fam_head :=
 
     [evaln n e v] has the rules of [eval]; each rule concludes at height
     [S n] from premises of height [n]. *)
-Inductive evaln : nat -> Combination -> Combination -> Prop :=
-| evaln_val : forall n v,
-    evaln (S n) (Sm v) v
-| evaln_appl : forall n e11 e12 e2 v1 v,
-    evaln n (Fk e11 e12) v1 ->
-    evaln n (Fk (Sm v1) e2) v ->
-    evaln (S n) (Fk (Fk e11 e12) e2) v
-| evaln_appr : forall n v1 e21 e22 v2 v,
-    evaln n (Fk e21 e22) v2 ->
-    evaln n (Fk (Sm v1) (Sm v2)) v ->
-    evaln (S n) (Fk (Sm v1) (Fk e21 e22)) v
-| evaln_to_stem : forall n v2,
-    evaln (S n) (Fk (Sm Lf) (Sm v2)) (Sm v2)
-| evaln_to_fork : forall n v1 v2,
-    evaln (S n) (Fk (Sm (Sm v1)) (Sm v2)) (Fk v1 v2)
-| evaln_k : forall n v1 v2,
-    evaln (S n) (Fk (Sm (Fk Lf v1)) (Sm v2)) v1
-| evaln_s : forall n g f v2 v,
-    evaln n (Fk (Fk (Sm g) (Sm v2)) (Fk (Sm f) (Sm v2))) v ->
-    evaln (S n) (Fk (Sm (Fk (Sm g) f)) (Sm v2)) v
+Inductive evaln : nat -> Application -> Combination -> Prop :=
+| evaln_appl : forall n d u w v,
+    evaln n d w -> evaln n (w @ u) v -> evaln (S n) (d @r u) v
+| evaln_to_stem : forall n u,
+    evaln (S n) (Lf @ u) (Sm u)
+| evaln_to_fork : forall n a u,
+    evaln (S n) (Sm a @ u) (Fk a u)
+| evaln_k : forall n a u,
+    evaln (S n) (Fk Lf a @ u) a
+| evaln_s : forall n g f u a b v,
+    evaln n (g @ u) a -> evaln n (f @ u) b -> evaln n (a @ b) v ->
+    evaln (S n) (Fk (Sm g) f @ u) v
 | evaln_leaf : forall n f0 f1 f2,
-    evaln (S n) (Fk (Sm ('triage [f0, f1, f2])) (Sm Lf)) f0
-| evaln_stem : forall n f0 f1 f2 v2 v,
-    evaln n (Fk (Sm f1) (Sm v2)) v ->
-    evaln (S n) (Fk (Sm ('triage [f0, f1, f2])) (Sm (Sm v2))) v
-| evaln_fork : forall n f0 f1 f2 v21 v22 v,
-    evaln n (Fk (Fk (Sm f2) (Sm v21)) (Sm v22)) v ->
-    evaln (S n) (Fk (Sm ('triage [f0, f1, f2])) (Sm (Fk v21 v22))) v.
+    evaln (S n) ('triage [f0, f1, f2] @ Lf) f0
+| evaln_stem : forall n f0 f1 f2 u v,
+    evaln n (f1 @ u) v ->
+    evaln (S n) ('triage [f0, f1, f2] @ Sm u) v
+| evaln_fork : forall n f0 f1 f2 x y v,
+    evaln n (f2 @ x @r y) v ->
+    evaln (S n) ('triage [f0, f1, f2] @ Fk x y) v.
 
 Lemma evaln_mono : forall n e v, evaln n e v ->
   forall m, n <= m -> evaln m e v.
@@ -123,7 +115,7 @@ Proof.
   intros n e v H; induction H; intros m Hm;
     (destruct m as [|m]; [lia|]);
     econstructor; try apply IHevaln; try apply IHevaln1; try apply IHevaln2;
-    lia.
+    try apply IHevaln3; lia.
 Qed.
 
 Lemma evaln_eval : forall n e v, evaln n e v -> e ==> v.
@@ -134,47 +126,46 @@ Proof.
   intros e v H; induction H;
     repeat match goal with H : exists _, _ |- _ => destruct H end;
     try (exists 1; constructor; fail).
-  all: try (exists (S x); constructor; assumption).
-  all: exists (S (Nat.max x x0));
-    first [eapply evaln_appl | eapply evaln_appr];
-    eapply evaln_mono; eauto; lia.
+  all: first
+    [ match goal with H1 : evaln ?a _ _, H2 : evaln ?b _ _, H3 : evaln ?c _ _ |- _ =>
+        exists (S (a + b + c)); econstructor; eapply evaln_mono; eauto; lia end
+    | match goal with H1 : evaln ?a _ _, H2 : evaln ?b _ _ |- _ =>
+        exists (S (a + b)); econstructor; eapply evaln_mono; eauto; lia end
+    | match goal with H1 : evaln ?a _ _ |- _ => exists (S a); constructor; exact H1 end ].
 Qed.
 
-(** Invert height-indexed evaluations whose expression shape determines
+(** Invert height-indexed evaluations whose application shape determines
     the rule, as [invert_eval] does for [eval]. *)
 Ltac invert_evaln :=
   repeat match goal with
-  | H : evaln _ (Sm _) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Fk _ _) _) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm _) (Fk _ _)) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm Lf) (Sm _)) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm (Sm _)) (Sm _)) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm (Fk Lf _)) (Sm _)) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm (Fk (Sm _) _)) (Sm _)) _ |- _ => inv_out H
-  | H : evaln _ (Fk (Sm (Fk (Fk _ _) _)) (Sm _)) _ |- _ => inv_out H
-  | H : evaln _ (Fk Lf _) _ |- _ => inv_out H
+  | H : evaln _ (_ @r _) _ |- _ => inv_out H
+  | H : evaln _ (Lf @ _) _ |- _ => inv_out H
+  | H : evaln _ (Sm _ @ _) _ |- _ => inv_out H
+  | H : evaln _ (Fk Lf _ @ _) _ |- _ => inv_out H
+  | H : evaln _ (Fk (Sm _) _ @ _) _ |- _ => inv_out H
+  | H : evaln _ (Fk (Fk _ _) _ @ _) _ |- _ => inv_out H
   end.
 
 Lemma evaln_lt : forall a k e v, evaln a e v -> a <= k -> evaln k e v.
 Proof. intros; eapply evaln_mono; eauto. Qed.
 
-Lemma evaln_appl_pred : forall k e11 e12 e2 v1 v,
-  0 < k -> evaln (pred k) (Fk e11 e12) v1 -> evaln (pred k) (Fk (Sm v1) e2) v ->
-  evaln k (Fk (Fk e11 e12) e2) v.
-Proof. intros; destruct k; [lia|]; apply evaln_appl with (v1 := v1); assumption. Qed.
+Lemma evaln_appl_pred : forall k d u w v,
+  0 < k -> evaln (pred k) d w -> evaln (pred k) (w @ u) v ->
+  evaln k (d @r u) v.
+Proof. intros; destruct k; [lia|]; apply evaln_appl with (w := w); assumption. Qed.
 
 (** Close a goal [evaln k e v] from height-indexed premises in context:
     either a premise for [e] itself, or a reassembly of an application
-    whose argument premise determines the intermediate value. *)
+    whose second premise determines the intermediate value. *)
 Ltac evaln_close :=
   first
   [ match goal with H : evaln ?a ?e ?v |- evaln ?k ?e ?v =>
       apply (evaln_lt a k e v H); lia end
   | match goal with
-    | |- evaln ?k (Fk (Fk ?e11 ?e12) ?e2) ?v =>
-        match goal with H2 : evaln ?b (Fk (Sm ?v1) e2) ?v' |- _ =>
+    | |- evaln ?k (?d @r ?u) ?v =>
+        match goal with H2 : evaln ?b (?w @ u) ?v' |- _ =>
           unify v v';
-          apply (evaln_appl_pred k e11 e12 e2 v1 v);
+          apply (evaln_appl_pred k d u w v);
           [lia|evaln_close|apply (evaln_lt b _ _ _ H2); lia] end
     end
   | eapply evaln_lt; [eassumption|lia] ].
@@ -215,11 +206,11 @@ Lemma Z_evaln_inv : forall n f x v,
 Proof.
   intros n f x v H; unfold Z in H; invert_evaln.
   match goal with
-  | H : evaln _ (Fk (Sm dup_z) (Sm _)) _ |- _ =>
+  | H : evaln _ (dup_z @ _) _ |- _ =>
       unfold dup_z at 1 in H
   end; invert_evaln.
   match goal with
-  | H : evaln _ (Fk (Sm bz) (Sm _)) _ |- _ =>
+  | H : evaln _ (bz @ _) _ |- _ =>
       unfold bz in H
   end; invert_evaln.
   exists_pred; split; [|evaln_close]; unfold Z; evaln_close.
@@ -283,8 +274,8 @@ Proof.
   intros AI n F U R Hplain H.
   inv_out H.
   match goal with
-  | H1 : evaln _ (Fk (Sm (app AI)) (Sm F)) ?w,
-    H2 : evaln ?k (Fk (Sm ?w) (Sm U)) R |- _ =>
+  | H1 : evaln _ (app AI @ F) ?w,
+    H2 : evaln ?k (?w @ U) R |- _ =>
     destruct (app_partial_evaln AI _ F w Hplain H1) as [m [Hm HD]]
   end.
   exists n0; eexists; split; [lia|split; [evaln_close|eassumption]].
@@ -388,9 +379,8 @@ Transparent app inf equal equal1 get_tagname abstract_case extend_program defaul
     it makes is sound for values (a carrier applied to a value of the
     argument type yields a value of the result type).
 
-    eval_tree retains the preservation property at every evaluation subtree.
-    The final section makes
-    abstract-introduction soundness compositional. *)
+    The final section makes abstract-introduction soundness
+    compositional. *)
 From TreeTyping Require Import tree.
 From TreeTyping Require Import typing.
 From TreeTyping Require Import typing.
@@ -694,14 +684,17 @@ Proof.
  inversion HE'; subst a b; repeat split; assumption.
 Qed.
 
+(** The typing of the reduct of [triage[f0,f1,f2] @ x]. *)
+Definition reduct_typed AI f0 f1 f2 x T : Prop :=
+  match x with
+  | Lf => inf AI @ f0 ==> Sm T
+  | Sm y => has_type AI (f1 @ y) T
+  | Fk y z => has_type AI (f2 @ y @r z) T
+  end.
+
 Lemma children_reduct_typing : forall AI f0 f1 f2 x X,
  inf AI @ 'triage[f0,f1,f2] ==> Sm (update_one_level ('Update)) ->
- inf AI @ x ==> Sm X ->
- match x with
- | Lf => inf AI @ f0 ==> Sm X
- | Sm y => infer_expression AI @ (f1 @ y) ==> Sm X
- | Fk y z => infer_expression AI @ (f2 @ y @r z) ==> Sm X
- end.
+ inf AI @ x ==> Sm X -> reduct_typed AI f0 f1 f2 x X.
 Proof.
  intros AI f0 f1 f2 x X Htriage Hx.
  destruct (inf_children_inv AI f0 f1 f2 Htriage) as [H0 [H1 H2]].
@@ -709,16 +702,10 @@ Proof.
  - pose proof (eval_deterministic _ _ Hx _ (typing.inf_leaf AI)) as HE;
    inversion HE; subst; exact H0.
  - destruct (typing.infer_stem_inv AI _ _ Hx) as [Y [-> Hy]].
-   eapply infer_expression_fork;
-   [apply infer_expression_stem; exact H1|apply infer_expression_stem; exact Hy|
-    apply app_update_stem].
+   eapply has_type_ap; [exact H1|exact Hy|apply app_update_stem].
  - destruct (typing.infer_fork_inv AI _ _ _ Hx) as [Y [Z [Hy [Hz HP]]]].
-   eapply infer_expression_fork.
-   + eapply infer_expression_fork;
-     [apply infer_expression_stem; exact H2|apply infer_expression_stem; exact Hy|
-      apply app_update_fork_first].
-   + apply infer_expression_stem; exact Hz.
-   + apply app_update_fork_second; exact HP.
+   eapply has_type_apr; [|exact Hz|apply app_update_fork_second; exact HP].
+   eapply has_type_ap; [exact H2|exact Hy|apply app_update_fork_first].
 Qed.
 
 (** The two function-introduction cases handled by the core. *)
@@ -785,175 +772,123 @@ Qed.
 End FunctionSoundnessFacts.
 
 Local Opaque equal1.
-(** Retain the preservation hypothesis at every evaluation subtree. *)
-Inductive eval_tree (P : Combination -> Combination -> Prop) :
-  Combination -> Combination -> Prop :=
-| tree_val : forall v, P (Sm v) v -> eval_tree P (Sm v) v
-| tree_appl : forall e11 e12 e2 v1 v,
-    eval_tree P (Fk e11 e12) v1 -> eval_tree P (Fk (Sm v1) e2) v ->
-    P (Fk (Fk e11 e12) e2) v -> eval_tree P (Fk (Fk e11 e12) e2) v
-| tree_appr : forall v1 e21 e22 v2 v,
-    eval_tree P (Fk e21 e22) v2 -> eval_tree P (v1 @ v2) v ->
-    P (Fk (Sm v1) (Fk e21 e22)) v -> eval_tree P (Fk (Sm v1) (Fk e21 e22)) v
-| tree_to_stem : forall v2, P (Lf @ v2) (Sm v2) -> eval_tree P (Lf @ v2) (Sm v2)
-| tree_to_fork : forall v1 v2, P (Sm v1 @ v2) (Fk v1 v2) ->
-    eval_tree P (Sm v1 @ v2) (Fk v1 v2)
-| tree_k : forall v1 v2, P (('K1 v1) @ v2) v1 -> eval_tree P (('K1 v1) @ v2) v1
-| tree_s : forall g f x v,
-    eval_tree P (Fk (g @ x) (f @ x)) v ->
-    P ('S2[g,f] @ x) v -> eval_tree P ('S2[g,f] @ x) v
-| tree_leaf : forall f0 f1 f2, P ('triage[f0,f1,f2] @ Lf) f0 ->
-    eval_tree P ('triage[f0,f1,f2] @ Lf) f0
-| tree_stem : forall f0 f1 f2 x v,
-    eval_tree P (f1 @ x) v -> P ('triage[f0,f1,f2] @ Sm x) v ->
-    eval_tree P ('triage[f0,f1,f2] @ Sm x) v
-| tree_fork : forall f0 f1 f2 x y v,
-    eval_tree P (f2 @ x @r y) v -> P ('triage[f0,f1,f2] @ Fk x y) v ->
-    eval_tree P ('triage[f0,f1,f2] @ Fk x y) v.
-
-Lemma eval_tree_root : forall P e v, eval_tree P e v -> P e v.
-Proof. intros P e v H; inversion H; assumption. Qed.
 
 Section Soundness.
 Variable AI : Combination.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 Local Abbreviation infer := (inf AI).
-Local Abbreviation infer_expression := (infer_expression AI).
 Local Notation "F # U" := (type_app @ F @r U) (at level 45, left associativity).
-Lemma tagged_carrier_redex_typing :
-  forall g f u T G F C N U,
-    infer @ g ==> Sm G ->
-    infer @ f ==> Sm F ->
-    infer @ u ==> Sm U ->
-    'S2[G,F] = 'tagged[C,N] ->
-    C # U ==> Sm T ->
-    infer_expression @ Fk (g @ u) (f @ u) ==> Sm T.
+
+(** ** The rules without a premise *)
+
+Lemma leaf_app_typing : forall u F U T,
+  infer @ Lf ==> Sm F -> infer @ u ==> Sm U -> F # U ==> Sm T ->
+  infer @ Sm u ==> Sm T.
 Proof.
-  intros g f u T G F C N U HG HF HU Htag Hcarrier.
-  inv_out Htag.
-  eapply typing.infer_expression_fork.
-  eapply typing.infer_expression_fork.
-  eapply typing.infer_expression_stem; eauto.
-  eapply typing.infer_expression_stem; eauto.
-  eapply typing.app_K.
-  eapply typing.infer_expression_fork.
-  eapply typing.infer_expression_stem; eauto.
-  eapply typing.infer_expression_stem; eauto.
-  new_S. discriminate.
+  intros u F U T Hf Hu HT.
+  pose proof (eval_deterministic _ _ Hf _ (typing.inf_leaf AI)) as HF; inv_out HF.
+  pose proof (eval_deterministic _ _ HT _ (typing.app_leaf AI U)) as HE; inv_out HE.
+  apply typing.inf_stem; exact Hu.
+Qed.
+
+Lemma stem_app_typing : forall a u F U T,
+  infer @ Sm a ==> Sm F -> infer @ u ==> Sm U -> F # U ==> Sm T ->
+  infer @ Fk a u ==> Sm T.
+Proof.
+  intros a u F U T Hf Hu HT.
+  destruct (typing.infer_stem_inv AI _ _ Hf) as [A [-> Ha]].
+  exact (typing.inf_fork AI _ _ _ _ _ Ha Hu HT).
+Qed.
+
+(** ** The rules with premises
+
+    Each typed application is inverted into the typings of the
+    applications of its reduct. *)
+
+(** The second component of a tagged value passes its argument through. *)
+Lemma tagged_part_type : forall N U, 'S2['K,'K1 N] # U ==> Sm U.
+Proof.
+  intros N U; new_S. discriminate.
   eapply typing.app_stem.
   eapply type_app_stem_structural; intros; discriminate.
   eapply typing.app_K.
   eapply typing.app_K.
-  auto.
 Qed.
 
+(** An application of [S2[g,f]] is typed as its reduct, unless the value
+    is tagged: then [g = K1 c] for its carrier [c], and the type is given
+    by the abstractor declared at its tag. *)
+Lemma S_app_typing_inv : forall g f u F U T,
+  infer @ 'S2[g,f] ==> Sm F -> infer @ u ==> Sm U -> F # U ==> Sm T ->
+  (exists G H VG VH, infer @ g ==> Sm G /\ infer @ f ==> Sm H /\
+     G # U ==> Sm VG /\ H # U ==> Sm VH /\ VG # VH ==> Sm T) \/
+  (exists c C N E, g = 'K1 c /\ infer @ c ==> Sm C /\
+     infer @ f ==> Sm ('S2['K,'K1 N]) /\
+     AI @ N @r type_app @r C ==> Sm E /\ E @ type_app @r U ==> Sm T).
+Proof.
+  intros g f u FT U T Hfunction Hu Happ.
+  destruct (typing.infer_fork_inv AI _ _ _ Hfunction) as [GT [F [Hleft [Hf Hc]]]].
+  destruct (typing.infer_stem_inv AI _ _ Hleft) as [G [-> Hg]].
+  apply typing.app_stem_inv in Hc.
+  destruct (tagged_decide ('S2[G,F])) as [[C [N Htag]]|Hplain].
+  - right; inversion Htag; subst G F.
+    destruct (type_app_stem_tagged_success_inv AI type_app C N FT Hc)
+      as [E [Hintro ->]].
+    apply app_abstract_inv in Happ.
+    destruct (infer_K1_inv AI g C Hg) as [c [-> Hc']].
+    exists c, C, N, E; repeat split; assumption.
+  - left.
+    pose proof (type_app_stem_structural_inv AI type_app _ _ _ Hplain Hc) as ->.
+    pose proof (app_plain_inv AI _ _ _ (abstract_case_none _ Hplain) Happ) as HD.
+    destruct (default_S_inv _ _ _ _ _ _ HD) as [VG [VF [HG [HF HR]]]].
+    exists G, F, VG, VF; repeat split; assumption.
+Qed.
 
 (** Query application may be used compositionally inside the stem and fork
     reducts of triage. *)
-Lemma query_expression_application_typing : forall e u B U,
-  infer_expression @ e ==> Sm ('Query[B]) ->
-  infer_expression @ u ==> Sm U ->
-  infer_expression @ Fk e u ==> Sm B.
-Proof.
-  intros e u B U He Hu.
-  eapply typing.infer_expression_fork; eauto.
-  eapply typing.app_abstract.
-  apply query_eliminator_eval.
-Qed.
+Lemma query_app_type : forall B U, ('Query[B]) # U ==> Sm B.
+Proof. intros; eapply typing.app_abstract; apply query_eliminator_eval. Qed.
 
 Lemma query_triage_reduct_typing : forall f0 f1 f2 x T X,
   infer @ ('triage[f0,f1,f2]) ==> Sm (query_one_level T) ->
   infer @ x ==> Sm X ->
-  match x with
-  | Lf => infer @ f0 ==> Sm T
-  | Sm y => infer_expression @ (f1 @ y) ==> Sm T
-  | Fk y z => infer_expression @ (f2 @ y @r z) ==> Sm T
-  end.
+  reduct_typed AI f0 f1 f2 x T.
 Proof.
   intros f0 f1 f2 x T X Htriage Hx.
   destruct (typing.infer_triage_inv AI f0 f1 f2 T Htriage) as [Hf0 [Hf1 Hf2]].
   destruct x as [|y|y z].
   - exact Hf0.
   - destruct (typing.infer_stem_inv AI _ _ Hx) as [Y [HX Hy]].
-    inversion HX; subst X.
-    eapply query_expression_application_typing.
-    + eapply typing.infer_expression_stem; exact Hf1.
-    + eapply typing.infer_expression_stem; exact Hy.
+    eapply has_type_ap; [exact Hf1|exact Hy|apply query_app_type].
   - destruct (typing.infer_fork_inv AI _ _ _ Hx) as [Y [Z [Hy [Hz Hpair]]]].
-    eapply query_expression_application_typing.
-    + eapply query_expression_application_typing.
-      * eapply typing.infer_expression_stem; exact Hf2.
-      * eapply typing.infer_expression_stem; exact Hy.
-    + eapply typing.infer_expression_stem; exact Hz.
+    eapply has_type_apr; [|exact Hz|apply query_app_type].
+    eapply has_type_ap; [exact Hf2|exact Hy|apply query_app_type].
 Qed.
 
-Lemma structural_triage_reduct_typing : forall f0 f1 f2 F0 F1 F2 x X T,
-  infer @ 'triage[f0,f1,f2] ==> Sm ('triage[F0,F1,F2]) ->
-  infer @ x ==> Sm X ->
-  (((forall E N, Fk F0 F1 <> 'tagged[E,N]) /\
-    ((X = Lf /\ T = F0) \/ (exists N, X = Sm N /\ type_app @ F1 @r N ==> Sm T))) \/
-    (exists L R G, X = Fk L R /\
-      (forall E N, Fk L R <> 'tagged[E,N]) /\
-      type_app @ F2 @r L ==> Sm G /\ type_app @ G @r R ==> Sm T)) ->
-  match x with
-  | Lf => infer @ f0 ==> Sm T
-  | Sm y => infer_expression @ (f1 @ y) ==> Sm T
-  | Fk y z => infer_expression @ (f2 @ y @r z) ==> Sm T
-  end.
+Lemma triage_application_typing : forall f0 f1 f2 x Q X T,
+  infer @ 'triage[f0,f1,f2] ==> Sm Q -> infer @ x ==> Sm X -> Q # X ==> Sm T ->
+  reduct_typed AI f0 f1 f2 x T.
 Proof.
-  intros f0 f1 f2 F0 F1 F2 x X T Htriage Hx Hcase.
+  intros f0 f1 f2 x Q X T Htriage Hx Happ.
+  destruct (typing.infer_triage_shape AI _ _ _ _ Htriage) as [F0 [F1 [F2 ->]]].
+  pose proof (app_plain_inv AI _ _ _ (abstract_case_triage_none F0 F1 F2) Happ) as HD.
+  pose proof (structural_triage_inv _ _ _ _ _ _
+    (triage_case_inv _ _ _ _ _ _ (default_triage_inv _ _ _ _ _ _ _ HD))) as HC.
   destruct (typing.infer_plain_fork_inv AI _ (Fk F0 F1) F2
     ltac:(intros; discriminate) Htriage) as [p [q [HE [Hp Hq]]]].
   inversion HE; subst p q; clear HE.
-  destruct Hcase as [[Hplain HC]|[L [R [G [-> [HP [HL HR]]]]]]].
+  destruct HC as [[Hplain HC]|[L [R [G [-> [HP [HL HR]]]]]]].
   - destruct (typing.infer_plain_fork_inv AI _ F0 F1 Hplain Hp)
-    as [a [b [HE [Ha Hb]]]].
-  inversion HE; subst a b; clear HE.
-  destruct HC as [[-> ->]|[N [-> Hstep]]].
-  + pose proof (typing.infer_tag_free_inv AI x Lf Hx eq_refl) as ->; exact Ha.
-  + destruct (infer_stem_result_inv AI x N Hx) as [y [-> Hy]].
-    eapply typing.infer_expression_fork.
-    * apply typing.infer_expression_stem; exact Hb.
-    * apply typing.infer_expression_stem; exact Hy.
-    * exact Hstep.
-  - destruct (typing.infer_plain_fork_inv AI x L R HP Hx)
-      as [y [z [-> [Hy Hz]]]].
-    eapply typing.infer_expression_fork.
-    + eapply typing.infer_expression_fork.
-      * apply typing.infer_expression_stem; exact Hq.
-      * apply typing.infer_expression_stem; exact Hy.
-      * exact HL.
-    + apply typing.infer_expression_stem; exact Hz.
-    + exact HR.
-Qed.
-
-Lemma triage_application_typing : forall f0 f1 f2 x T,
- infer_expression @ ('triage[f0,f1,f2] @ x) ==> Sm T ->
- exists X, infer @ x ==> Sm X /\
- ((exists F0 F1 F2,
-   infer @ 'triage[f0,f1,f2] ==> Sm ('triage[F0,F1,F2]) /\
-   (((forall E N, Fk F0 F1 <> 'tagged[E,N]) /\
-     ((X = Lf /\ T = F0) \/
-      (exists N, X = Sm N /\ type_app @ F1 @r N ==> Sm T))) \/
-    (exists L R G, X = Fk L R /\
-      (forall E N, Fk L R <> 'tagged[E,N]) /\
-      type_app @ F2 @r L ==> Sm G /\ type_app @ G @r R ==> Sm T))) \/
- infer @ 'triage[f0,f1,f2] ==> Sm (query_one_level T) \/
- (T = X /\ infer @ 'triage[f0,f1,f2] ==> Sm (update_one_level ('Update)))).
-Proof.
- intros f0 f1 f2 x T Htyping.
- destruct (typing.infer_expression_fork_inv AI _ _ _ Htyping)
-   as [Q [X [Hfunction [Harg Happ]]]].
- apply typing.infer_expression_stem_inv in Hfunction.
- apply typing.infer_expression_stem_inv in Harg.
- exists X; split; [exact Harg|].
- destruct (typing.infer_triage_shape AI _ _ _ _ Hfunction) as [B [Q1 [Q2 ->]]].
- pose proof (app_plain_inv AI _ _ _ (abstract_case_triage_none B Q1 Q2) Happ) as HD.
- apply default_triage_inv in HD.
- pose proof (triage_case_inv _ _ _ _ _ _ HD) as HS.
- pose proof (structural_triage_inv _ _ _ _ _ _ HS) as HC.
- left; exists B,Q1,Q2; split; assumption.
+      as [a [b [HE [Ha Hb]]]].
+    inversion HE; subst a b; clear HE.
+    destruct HC as [[-> ->]|[N [-> Hstep]]].
+    + pose proof (typing.infer_tag_free_inv AI x Lf Hx eq_refl) as ->; exact Ha.
+    + destruct (infer_stem_result_inv AI x N Hx) as [y [-> Hy]].
+      eapply has_type_ap; [exact Hb|exact Hy|exact Hstep].
+  - destruct (typing.infer_plain_fork_inv AI x L R HP Hx) as [y [z [-> [Hy Hz]]]].
+    eapply has_type_apr; [|exact Hz|exact HR].
+    eapply has_type_ap; [exact Hq|exact Hy|exact HL].
 Qed.
 
 
@@ -965,155 +900,38 @@ Definition plain_intro_sound : Prop :=
     AI @ N @r type_app @r C ==> Sm E -> E @ type_app @r U ==> Sm V ->
     type_app @ C @r U ==> Sm V.
 
-Lemma plain_tagged_redex_typing :
-  forall g f u T g_ty f_ty C N,
-    plain_intro_sound ->
-    infer @ g ==> Sm g_ty ->
-    infer @ f ==> Sm f_ty ->
-    'S2[g_ty,f_ty] = 'tagged[C,N] ->
-    infer_expression @ (('S2[g,f]) @ u) ==> Sm T ->
-    infer_expression @ Fk (g @ u) (f @ u) ==> Sm T.
-Proof.
-  intros g f u T G F C N Hplain HG HF Htag Htyping.
-  destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-    as [function_ty [U
-      [Hfunction_expr [Hargument_expr Hfinal_app]]]].
-  pose proof
-    (typing.infer_expression_stem_inv _ _ _ Hfunction_expr) as Hfunction.
-  pose proof
-    (typing.infer_expression_stem_inv _ _ _ Hargument_expr) as Hargument.
-  destruct (typing.infer_fork_inv _ _ _ _ Hfunction)
-    as [left_ty [f_ty [Hleft [Hf Hconstructor_app]]]].
-  destruct (typing.infer_stem_inv _ _ _ Hleft)
-    as [g_ty [Hleft_ty Hg]].
-  subst left_ty.
-  assert (Sm g_ty = Sm G) by (eapply eval_deterministic; eauto).
-  inversion H; subst g_ty; clear H.
-  assert (Sm f_ty = Sm F) by (eapply eval_deterministic; eauto).
-  inversion H; subst f_ty; clear H.
-  assert(Hadapt :
-    type_app_stem @ type_app @r (Sm G) @r F ==> Sm function_ty).
-  { eapply typing.app_stem_inv; eauto. }
-  inversion Htag; subst G F.
-  destruct (type_app_stem_tagged_success_inv
-    AI type_app C N function_ty Hadapt)
-    as [E [Hintro Hfunction_ty]].
-  subst function_ty.
-  assert (Helim : E @ type_app @r U ==> Sm T)
-    by (eapply app_abstract_inv; exact Hfinal_app).
-  assert (Hcarrier_app : C # U ==> Sm T)
-    by (eapply Hplain; eassumption).
-  eapply tagged_carrier_redex_typing; eauto.
-Qed.
-
 Lemma plain_evaluation_preserves_typing : forall e v,
   plain_intro_sound ->
   e ==> v -> forall T,
-  infer_expression @ e ==> Sm T -> infer @ v ==> Sm T.
+  has_type AI e T -> infer @ v ==> Sm T.
 Proof.
-  intros e v plain Heval.
-  assert (Htree : eval_tree
-    (fun e v => forall T, infer_expression @ e ==> Sm T -> infer @ v ==> Sm T) e v).
-  { induction Heval.
-  - apply tree_val. intros T Htyping.
-    eapply typing.infer_expression_stem_inv; exact Htyping.
-  - eapply tree_appl; [exact IHHeval1|exact IHHeval2|]. intros T Htyping.
-    rename IHHeval1 into HT1; rename IHHeval2 into HT2.
-    pose proof (eval_tree_root _ _ _ HT1) as IHHeval1.
-    pose proof (eval_tree_root _ _ _ HT2) as IHHeval2.
-    eapply IHHeval2.
-    destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-      as [T1 [T2 [He1 [He2 Happ]]]].
-    eapply typing.infer_expression_fork.
-    + eapply typing.infer_expression_stem.
-      eapply IHHeval1; exact He1.
-    + exact He2.
-    + exact Happ.
-  - eapply tree_appr; [exact IHHeval1|exact IHHeval2|]. intros T Htyping.
-    rename IHHeval1 into HT1; rename IHHeval2 into HT2.
-    pose proof (eval_tree_root _ _ _ HT1) as IHHeval1.
-    pose proof (eval_tree_root _ _ _ HT2) as IHHeval2.
-    eapply IHHeval2.
-    destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-      as [T1 [T2 [He1 [He2 Happ]]]].
-    eapply typing.infer_expression_fork.
-    + exact He1.
-    + eapply typing.infer_expression_stem.
-      eapply IHHeval1; exact He2.
-    + exact Happ.
-  - apply tree_to_stem. intros T Htyping.
-    destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-      as [T1 [T2 [HK [Hv2 Happ]]]].
-    pose proof (typing.infer_expression_stem_inv _ _ _ HK) as Hleaf.
-    pose proof (typing.infer_expression_stem_inv _ _ _ Hv2) as Hv2'.
-    pose proof
-      (eval_deterministic _ _ Hleaf _ (typing.inf_leaf AI)) as HT1.
-    inversion HT1; subst T1.
-    assert(Lf # T2 ==> Sm (Sm T2)) by (eapply typing.app_leaf).
-    assert(Sm T = 'S1 T2) by (eapply eval_deterministic; eauto).
-    inv_out H0.
-    eapply typing.inf_stem; auto.
-  - apply tree_to_fork. intros T Htyping.
-    destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-      as [T1 [T2 [HS1 [Hv2 Happ]]]].
-    pose proof (typing.infer_expression_stem_inv _ _ _ HS1) as Hstem_v1.
-    pose proof (typing.infer_expression_stem_inv _ _ _ Hv2) as Hv2'.
-    destruct (typing.infer_stem_inv _ _ _ Hstem_v1)
-      as [V1 [HT1 Hv1]].
-    subst T1.
-    eapply typing.inf_fork; eauto.
-  - apply tree_k. intros T Htyping.
-    eapply typing.K_redex_typing; exact Htyping.
-  - apply tree_s; [exact IHHeval|]. intros T Htyping.
-    rename IHHeval into HT; pose proof (eval_tree_root _ _ _ HT) as IH.
-    destruct (typing.infer_expression_fork_inv AI _ _ _ Htyping)
-      as [FT [U [Hfunction [Hargument Happ]]]].
-    apply typing.infer_expression_stem_inv in Hfunction.
-    apply typing.infer_expression_stem_inv in Hargument.
-    destruct (typing.infer_fork_inv AI _ _ _ Hfunction)
-      as [GT [F [Hleft [Hf Hconstruction]]]].
-    destruct (typing.infer_stem_inv AI _ _ Hleft) as [G [-> Hg]].
-    destruct (tagged_decide ('S2[G,F])) as [[C [N Htag]]|Hplain].
-    + apply IH; eapply plain_tagged_redex_typing; eauto.
-    + apply typing.app_stem_inv in Hconstruction.
-      pose proof (type_app_stem_structural_inv AI type_app _ _ _ Hplain Hconstruction) as ->.
-      assert (HA : abstract_case @ ('S2[G,F]) ==> Lf).
-      { unfold abstract_case; apply type_app_abstract_case_S_none; exact Hplain. }
-      pose proof (app_plain_inv AI _ _ _ HA Happ) as HD.
-      destruct (default_S_inv _ _ _ _ _ _ HD) as [VG [VF [HG [HF HR]]]].
-      apply IH; eapply typing.infer_expression_fork.
-      * eapply typing.infer_expression_fork;
-          [apply typing.infer_expression_stem; exact Hg|
-           apply typing.infer_expression_stem; exact Hargument|exact HG].
-      * eapply typing.infer_expression_fork;
-          [apply typing.infer_expression_stem; exact Hf|
-           apply typing.infer_expression_stem; exact Hargument|exact HF].
-      * exact HR.
-  - apply tree_leaf. intros T Htyping.
-    destruct (triage_application_typing f0 f1 f2 Lf T Htyping)
-      as [X [Hx [HS|[HQ|[-> HC]]]]].
-    + destruct HS as [F0 [F1 [F2 [HF HC]]]].
-      exact (structural_triage_reduct_typing f0 f1 f2 F0 F1 F2 Lf X T HF Hx HC).
-    + exact (query_triage_reduct_typing f0 f1 f2 Lf T X HQ Hx).
-    + exact (children_reduct_typing AI f0 f1 f2 Lf X HC Hx).
-  - apply tree_stem; [exact IHHeval|]. intros T Htyping.
-    pose proof (eval_tree_root _ _ _ IHHeval) as IH.
-    destruct (triage_application_typing f0 f1 f2 (Sm v2) T Htyping)
-      as [X [Hx [HS|[HQ|[-> HC]]]]].
-    + destruct HS as [F0 [F1 [F2 [HF HC]]]].
-      apply IH; exact (structural_triage_reduct_typing f0 f1 f2 F0 F1 F2 (Sm v2) X T HF Hx HC).
-    + apply IH; exact (query_triage_reduct_typing f0 f1 f2 (Sm v2) T X HQ Hx).
-    + apply IH; exact (children_reduct_typing AI f0 f1 f2 (Sm v2) X HC Hx).
-  - apply tree_fork; [exact IHHeval|]. intros T Htyping.
-    pose proof (eval_tree_root _ _ _ IHHeval) as IH.
-    destruct (triage_application_typing f0 f1 f2 (Fk v21 v22) T Htyping)
-      as [X [Hx [HS|[HQ|[-> HC]]]]].
-    + destruct HS as [F0 [F1 [F2 [HF HC]]]].
-      apply IH; exact (structural_triage_reduct_typing f0 f1 f2 F0 F1 F2 (Fk v21 v22) X T HF Hx HC).
-    + apply IH; exact (query_triage_reduct_typing f0 f1 f2 (Fk v21 v22) T X HQ Hx).
-    + apply IH; exact (children_reduct_typing AI f0 f1 f2 (Fk v21 v22) X HC Hx).
-  }
-  exact (eval_tree_root _ _ _ Htree).
+  intros e v plain Heval; induction Heval; intros T HT.
+  - destruct (has_type_apr_inv _ _ _ _ HT) as [D [U [Hd [Hu HA]]]].
+    apply IHHeval2; eapply has_type_ap; [exact (IHHeval1 D Hd)|exact Hu|exact HA].
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    eapply leaf_app_typing; eassumption.
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    eapply stem_app_typing; eassumption.
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    eapply K_typing; eassumption.
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    destruct (S_app_typing_inv g f u F U T Hf Hu HA) as
+      [[G [H [VG [VH [Hg [Hh [HG [HH HR]]]]]]]]
+      |[c [C [N [E [-> [Hc [Hh [HI HE]]]]]]]]].
+    + apply IHHeval3; eapply has_type_ap;
+        [apply IHHeval1; eapply has_type_ap; eassumption
+        |apply IHHeval2; eapply has_type_ap; eassumption|exact HR].
+    + pose proof (eval_deterministic _ _ Heval1 _ (eval_k c u)) as ->.
+      apply IHHeval3; eapply has_type_ap;
+        [exact Hc
+        |apply IHHeval2; eapply has_type_ap; [exact Hh|exact Hu|apply tagged_part_type]
+        |exact (plain C N E U T HI HE)].
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    exact (triage_application_typing f0 f1 f2 Lf F U T Hf Hu HA).
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    exact (IHHeval T (triage_application_typing f0 f1 f2 (Sm u) F U T Hf Hu HA)).
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]].
+    exact (IHHeval T (triage_application_typing f0 f1 f2 (Fk x y) F U T Hf Hu HA)).
 Qed.
 
 End Soundness.
@@ -1184,136 +1002,101 @@ Qed.
 
 (** ** Bounded evaluation
 
-    [eval_bounded n e] evaluates the expression [e] with recursion depth
-    at most [n]; every subevaluation has a smaller bound.  It agrees with
+    [eval_bounded n e] evaluates the application [e] with recursion depth
+    at most [n]; every premise has a smaller bound.  It agrees with
     [eval] ([eval_bounded_sound], [eval_bounded_complete]). *)
-Fixpoint eval_bounded (n : nat) (e : Combination) : option Combination :=
+(** One level of evaluation, with [rec] evaluating the premises. *)
+Definition eval_step (rec : Application -> option Combination) (e : Application)
+  : option Combination :=
+  match e with
+  | d @r u =>
+    match rec d with
+    | Some w => rec (w @ u)
+    | None => None
+    end
+  | f @ u =>
+    match f with
+    | Lf => Some (Sm u)
+    | Sm a => Some (Fk a u)
+    | Fk Lf a => Some a
+    | Fk (Sm g) h =>
+      match rec (g @ u) with
+      | Some a =>
+        match rec (h @ u) with
+        | Some b => rec (a @ b)
+        | None => None
+        end
+      | None => None
+      end
+    | Fk (Fk f0 f1) f2 =>
+      match u with
+      | Lf => Some f0
+      | Sm x => rec (f1 @ x)
+      | Fk x y => rec (f2 @ x @r y)
+      end
+    end
+  end.
+
+Fixpoint eval_bounded (n : nat) (e : Application) : option Combination :=
   match n with
   | O => None
-  | S n =>
-    match e with
-    | Lf => None
-    | Sm v => Some v
-    | Fk (Sm v1) (Sm v2) =>
-      match v1 with
-      | Lf => Some (Sm v2)
-      | Sm v => Some (Fk v v2)
-      | Fk Lf y => Some y
-      | Fk (Sm g) f => eval_bounded n (Fk (Fk (Sm g) (Sm v2)) (Fk (Sm f) (Sm v2)))
-      | Fk (Fk f0 f1) f2 =>
-        match v2 with
-        | Lf => Some f0
-        | Sm u => eval_bounded n (Fk (Sm f1) (Sm u))
-        | Fk u1 u2 => eval_bounded n (Fk (Fk (Sm f2) (Sm u1)) (Sm u2))
-        end
-      end
-    | Fk (Sm v1) (Fk a b) =>
-      match eval_bounded n (Fk a b) with
-      | Some v2 => eval_bounded n (Fk (Sm v1) (Sm v2))
-      | None => None
-      end
-    | Fk (Fk a b) e2 =>
-      match eval_bounded n (Fk a b) with
-      | Some v1 => eval_bounded n (Fk (Sm v1) e2)
-      | None => None
-      end
-    | Fk Lf _ | Fk (Sm _) Lf => None
-    end
+  | S n => eval_step (eval_bounded n) e
   end.
 
 Lemma eval_bounded_sound : forall n e v, eval_bounded n e = Some v -> e ==> v.
 Proof.
   induction n as [|n IH]; intros e v H; [discriminate|].
-  destruct e as [|v0|[|v1|a b] e2]; cbn [eval_bounded] in H; try discriminate.
-  - inversion H; constructor.
-  - destruct e2 as [|v2|c d]; try discriminate.
-    + destruct v1 as [|w|[|g|f0 f1] f2].
+  destruct e as [f u|d u]; cbn [eval_bounded eval_step] in H.
+  - destruct f as [|a|[|g|f0 f1] h].
+    + inversion H; constructor.
+    + inversion H; constructor.
+    + inversion H; constructor.
+    + destruct (eval_bounded n (g @ u)) as [a|] eqn:E1; [|discriminate].
+      destruct (eval_bounded n (h @ u)) as [b|] eqn:E2; [|discriminate].
+      eapply eval_s; apply IH; eassumption.
+    + destruct u as [|x|x y].
       * inversion H; constructor.
-      * inversion H; constructor.
-      * inversion H; constructor.
-      * apply eval_s, IH, H.
-      * destruct v2 as [|u|u1 u2].
-        -- inversion H; constructor.
-        -- apply eval_stem, IH, H.
-        -- apply eval_fork, IH, H.
-    + destruct (eval_bounded n (Fk c d)) as [v2|] eqn:E; [|discriminate].
-      eapply eval_appr; [apply IH, E|apply IH, H].
-  - destruct (eval_bounded n (Fk a b)) as [w|] eqn:E; [|discriminate].
-    eapply eval_appl; [apply IH, E|apply IH, H].
+      * apply eval_stem, IH, H.
+      * apply eval_fork, IH, H.
+  - destruct (eval_bounded n d) as [w|] eqn:E; [|discriminate].
+    eapply eval_appl; apply IH; eassumption.
 Qed.
-
-Definition eval_bounded_step (n : nat) (e : Combination) : option Combination :=
-    match e with
-    | Lf => None
-    | Sm v => Some v
-    | Fk (Sm v1) (Sm v2) =>
-      match v1 with
-      | Lf => Some (Sm v2)
-      | Sm v => Some (Fk v v2)
-      | Fk Lf y => Some y
-      | Fk (Sm g) f => eval_bounded n (Fk (Fk (Sm g) (Sm v2)) (Fk (Sm f) (Sm v2)))
-      | Fk (Fk f0 f1) f2 =>
-        match v2 with
-        | Lf => Some f0
-        | Sm u => eval_bounded n (Fk (Sm f1) (Sm u))
-        | Fk u1 u2 => eval_bounded n (Fk (Fk (Sm f2) (Sm u1)) (Sm u2))
-        end
-      end
-    | Fk (Sm v1) (Fk a b) =>
-      match eval_bounded n (Fk a b) with
-      | Some v2 => eval_bounded n (Fk (Sm v1) (Sm v2))
-      | None => None
-      end
-    | Fk (Fk a b) e2 =>
-      match eval_bounded n (Fk a b) with
-      | Some v1 => eval_bounded n (Fk (Sm v1) e2)
-      | None => None
-      end
-    | Fk Lf _ | Fk (Sm _) Lf => None
-    end.
-
-Lemma eval_bounded_unfold : forall n e, eval_bounded (S n) e = eval_bounded_step n e.
-Proof. reflexivity. Qed.
 
 Lemma eval_bounded_S : forall n e v, eval_bounded n e = Some v -> eval_bounded (S n) e = Some v.
 Proof.
   induction n as [|n IH]; intros e v H; [discriminate|].
-  rewrite eval_bounded_unfold in H |- *; unfold eval_bounded_step in H |- *.
-  destruct e as [|v0|[|v1|a b] e2]; try discriminate; try exact H.
-  - destruct e2 as [|v2|c d]; try discriminate.
-    + destruct v1 as [|w|[|g|f0 f1] f2]; try exact H.
-      * apply IH, H.
-      * destruct v2 as [|u|u1 u2]; [exact H|apply IH, H|apply IH, H].
-    + destruct (eval_bounded n (Fk c d)) as [v2|] eqn:E; [|discriminate].
-      rewrite (IH _ _ E); apply IH, H.
-  - destruct (eval_bounded n (Fk a b)) as [w|] eqn:E; [|discriminate].
+  change (eval_bounded (S (S n)) e) with (eval_step (eval_bounded (S n)) e).
+  change (eval_bounded (S n) e) with (eval_step (eval_bounded n) e) in H.
+  destruct e as [f u|d u]; cbn [eval_step] in H |- *.
+  - destruct f as [|a|[|g|f0 f1] h]; try exact H.
+    + destruct (eval_bounded n (g @ u)) as [a|] eqn:E1; [|discriminate].
+      destruct (eval_bounded n (h @ u)) as [b|] eqn:E2; [|discriminate].
+      rewrite (IH _ _ E1), (IH _ _ E2); apply IH, H.
+    + destruct u as [|x|x y]; [exact H|apply IH, H|apply IH, H].
+  - destruct (eval_bounded n d) as [w|] eqn:E; [|discriminate].
     rewrite (IH _ _ E); apply IH, H.
 Qed.
 
-Lemma eval_bounded_le : forall n m e v, n <= m -> eval_bounded n e = Some v -> eval_bounded m e = Some v.
+Lemma eval_bounded_le : forall n e v, eval_bounded n e = Some v ->
+  forall m, n <= m -> eval_bounded m e = Some v.
 Proof.
-  intros n m e v Hle; induction Hle; intro H; [exact H|apply eval_bounded_S, IHHle, H].
+  intros n e v H m Hle; induction Hle; [exact H|apply eval_bounded_S, IHHle].
 Qed.
 
 Lemma eval_bounded_complete : forall e v, e ==> v -> exists n, eval_bounded n e = Some v.
 Proof.
-  intros e v H; induction H.
-  - exists 1; reflexivity.
-  - destruct IHeval1 as [n1 H1]; destruct IHeval2 as [n2 H2].
-    exists (S (n1 + n2)); rewrite eval_bounded_unfold; unfold eval_bounded_step.
-    rewrite (eval_bounded_le n1 (n1 + n2) _ _ ltac:(lia) H1).
-    exact (eval_bounded_le n2 (n1 + n2) _ _ ltac:(lia) H2).
-  - destruct IHeval1 as [n1 H1]; destruct IHeval2 as [n2 H2].
-    exists (S (n1 + n2)); rewrite eval_bounded_unfold; unfold eval_bounded_step.
-    rewrite (eval_bounded_le n1 (n1 + n2) _ _ ltac:(lia) H1).
-    exact (eval_bounded_le n2 (n1 + n2) _ _ ltac:(lia) H2).
-  - exists 1; reflexivity.
-  - exists 1; reflexivity.
-  - exists 1; reflexivity.
-  - destruct IHeval as [n H1]; exists (S n); exact H1.
-  - exists 1; reflexivity.
-  - destruct IHeval as [n H1]; exists (S n); exact H1.
-  - destruct IHeval as [n H1]; exists (S n); exact H1.
+  intros e v H; induction H;
+    repeat match goal with H : exists _, _ |- _ => destruct H as [? H] end;
+    try (exists 1; reflexivity).
+  - exists (S (x + x0)); cbn [eval_bounded eval_step].
+    rewrite (eval_bounded_le _ _ _ IHeval1 (x + x0) ltac:(lia)).
+    exact (eval_bounded_le _ _ _ IHeval2 (x + x0) ltac:(lia)).
+  - exists (S (x + x0 + x1)); cbn [eval_bounded eval_step].
+    rewrite (eval_bounded_le _ _ _ IHeval1 (x + x0 + x1) ltac:(lia)),
+      (eval_bounded_le _ _ _ IHeval2 (x + x0 + x1) ltac:(lia)).
+    exact (eval_bounded_le _ _ _ IHeval3 (x + x0 + x1) ltac:(lia)).
+  - match goal with IH : eval_bounded ?k _ = _ |- _ => exists (S k); exact IH end.
+  - match goal with IH : eval_bounded ?k _ = _ |- _ => exists (S k); exact IH end.
 Qed.
 
 (** Evaluation is bounded evaluation at some depth. *)
@@ -1325,20 +1108,31 @@ Proof.
   - intros [n H]; exact (eval_bounded_sound n e v H).
 Qed.
 
-Lemma eval_bounded_appl_inv : forall n a b e2 w,
-  eval_bounded (S n) (Fk (Fk a b) e2) = Some w ->
-  exists v1, eval_bounded n (Fk a b) = Some v1 /\ eval_bounded n (Fk (Sm v1) e2) = Some w.
-Proof.
-  intros n a b e2 w H; rewrite eval_bounded_unfold in H; unfold eval_bounded_step in H.
-  destruct (eval_bounded n (Fk a b)) as [v1|]; [eauto|discriminate].
-Qed.
+(** [app_type_bounded AI n f u] computes the type of [f @ u] within
+    bound [n]: [Some Lf] when inference or type application fails, [None]
+    when the bound runs out. *)
+Definition app_type_bounded (AI : Combination) (n : nat) (f u : Combination) :=
+  match eval_bounded n (inf AI @ f) with
+  | Some (Sm F) =>
+    match eval_bounded n (inf AI @ u) with
+    | Some (Sm U) => eval_bounded n (app AI @ F @r U)
+    | Some _ => Some Lf
+    | None => None
+    end
+  | Some _ => Some Lf
+  | None => None
+  end.
 
-Lemma eval_bounded_appr_inv : forall n v1 a b w,
-  eval_bounded (S n) (Fk (Sm v1) (Fk a b)) = Some w ->
-  exists v2, eval_bounded n (Fk a b) = Some v2 /\ eval_bounded n (v1 @ v2) = Some w.
+Lemma app_type_bounded_untyped : forall AI n f u T,
+  app_type_bounded AI n f u = Some Lf -> ~ has_type AI (f @ u) T.
 Proof.
-  intros n v1 a b w H; rewrite eval_bounded_unfold in H; unfold eval_bounded_step in H.
-  destruct (eval_bounded n (Fk a b)) as [v2|]; [eauto|discriminate].
+  intros AI n f u T Hc HT.
+  destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]]; unfold app_type_bounded in Hc.
+  destruct (eval_bounded n (inf AI @ f)) as [x|] eqn:E1; [|discriminate].
+  pose proof (eval_deterministic _ _ Hf _ (eval_bounded_sound _ _ _ E1)) as <-.
+  destruct (eval_bounded n (inf AI @ u)) as [y|] eqn:E2; [|discriminate].
+  pose proof (eval_deterministic _ _ Hu _ (eval_bounded_sound _ _ _ E2)) as <-.
+  pose proof (eval_deterministic _ _ HA _ (eval_bounded_sound _ _ _ Hc)); discriminate.
 Qed.
 
 (** ** Soundness for values
@@ -1350,8 +1144,8 @@ Qed.
     evaluation preserves typing ([ept]) at every evaluation of bound at
     most that of [c @ v] ([ept_within]): the induction on evaluation is
     an induction on the bound. *)
-Definition ept (AI : Combination) : Combination -> Combination -> Prop :=
-  fun e w => forall T, infer_expression AI @ e ==> Sm T -> inf AI @ w ==> Sm T.
+Definition ept (AI : Combination) : Application -> Combination -> Prop :=
+  fun e w => forall T, has_type AI e T -> inf AI @ w ==> Sm T.
 
 Definition ept_within (AI : Combination) (n : nat) : Prop :=
   forall m e w, m <= n -> eval_bounded m e = Some w -> ept AI e w.
@@ -1372,9 +1166,7 @@ Lemma carrier_value_typing : forall AI n C U V c v w,
   ept_within AI n -> eval_bounded n (c @ v) = Some w -> inf AI @ w ==> Sm V.
 Proof.
   intros AI n C U V c v w HC Hc Hv He Ht.
-  apply (He n _ _ (le_n n) Ht).
-  eapply infer_expression_fork;
-    [apply infer_expression_stem; exact Hc|apply infer_expression_stem; exact Hv|exact HC].
+  exact (He n _ _ (le_n n) Ht V (has_type_ap _ _ _ _ _ _ Hc Hv HC)).
 Qed.
 
 Lemma sound_by_typing_implies_sound : forall AI D,
@@ -1397,7 +1189,6 @@ Variable AI : Combination.
 Local Abbreviation type_app := (app AI).
 Local Abbreviation type_app_stem := (type_app_stem AI).
 Local Abbreviation infer := (inf AI).
-Local Abbreviation infer_expression := (infer_expression AI).
 Local Notation "F # U" := (type_app @ F @r U) (at level 45, left associativity).
 
 (** Evaluation within bound [n] preserves typing, by induction on [n]. *)
@@ -1406,140 +1197,47 @@ Lemma bounded_evaluation_preserves_typing :
 Proof.
   intros HSv n; induction n as [|n IH].
   { intros m e w Hm H; inversion Hm; subst; discriminate. }
-  intros m e w Hm H T Htyping.
+  intros m e w Hm H T HT.
   destruct (Nat.le_succ_r m n) as [HL _]; destruct (HL Hm) as [Hle| ->];
-    [exact (IH m e w Hle H T Htyping)|]; clear HL Hm.
-  rewrite eval_bounded_unfold in H; unfold eval_bounded_step in H.
-  destruct e as [|v0|[|v1|a b] e2]; try discriminate.
-  - (* a value *)
-    inversion H; subst.
-    eapply typing.infer_expression_stem_inv; exact Htyping.
-  - destruct e2 as [|v2|c d]; [discriminate| |].
-    + destruct v1 as [|w1|[|g|f0 f1] f2].
-      * (* Lf @ v2 *)
-        inversion H; subst.
-        destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-          as [T1 [T2 [HK [Hv2 Happ]]]].
-        pose proof (typing.infer_expression_stem_inv _ _ _ HK) as Hleaf.
-        pose proof (typing.infer_expression_stem_inv _ _ _ Hv2) as Hv2'.
-        pose proof (eval_deterministic _ _ Hleaf _ (typing.inf_leaf AI)) as HT1.
-        inversion HT1; subst T1.
-        assert (HA : Lf # T2 ==> Sm (Sm T2)) by (eapply typing.app_leaf).
-        assert (HE : Sm T = 'S1 T2) by (eapply eval_deterministic; eauto).
-        inv_out HE.
-        eapply typing.inf_stem; auto.
-      * (* Sm w1 @ v2 *)
-        inversion H; subst.
-        destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-          as [T1 [T2 [HS1 [Hv2 Happ]]]].
-        pose proof (typing.infer_expression_stem_inv _ _ _ HS1) as Hstem_v1.
-        pose proof (typing.infer_expression_stem_inv _ _ _ Hv2) as Hv2'.
-        destruct (typing.infer_stem_inv _ _ _ Hstem_v1) as [V1 [HT1 Hv1]].
-        subst T1.
-        eapply typing.inf_fork; eauto.
-      * (* K1 f2 @ v2 *)
-        inversion H; subst.
-        eapply typing.K_redex_typing; exact Htyping.
-      * (* S2[g,f2] @ v2 *)
-        rename f2 into f.
-        destruct (typing.infer_expression_fork_inv AI _ _ _ Htyping)
-          as [FT [U [Hfunction [Hargument Happ]]]].
-        apply typing.infer_expression_stem_inv in Hfunction.
-        apply typing.infer_expression_stem_inv in Hargument.
-        destruct (typing.infer_fork_inv AI _ _ _ Hfunction)
-          as [GT [F [Hleft [Hf Hconstruction]]]].
-        destruct (typing.infer_stem_inv AI _ _ Hleft) as [G [-> Hg]].
-        destruct (tagged_decide ('S2[G,F])) as [[C [N Htag]]|Hplain].
-        -- (* a tagged value: soundness for values *)
-           apply typing.app_stem_inv in Hconstruction.
-           pose proof Htag as Htag'; inversion Htag'; subst G F.
-           destruct (type_app_stem_tagged_success_inv AI type_app C N FT Hconstruction)
-             as [E [Hintro ->]].
-           apply app_abstract_inv in Happ.
-           destruct (infer_K1_inv AI g C Hg) as [c [-> Hc]].
-           destruct n as [|n1]; [discriminate|].
-           destruct (eval_bounded_appl_inv _ _ _ _ _ H) as [k [Hk Hrest]].
-           pose proof (eval_deterministic _ _ (eval_bounded_sound _ _ _ Hk) _ (eval_k c v2)) as ->.
-           destruct n1 as [|n2]; [discriminate|].
-           destruct (eval_bounded_appr_inv _ _ _ _ _ Hrest) as [x' [Hx' Hcx]].
-           assert (HU : infer @ x' ==> Sm U).
-           { apply (IH n2 _ _ ltac:(lia) Hx').
-             eapply typing.infer_expression_fork.
-             eapply typing.infer_expression_stem; eauto.
-             eapply typing.infer_expression_stem; eauto.
-             new_S. discriminate.
-             eapply typing.app_stem.
-             eapply type_app_stem_structural; intros; discriminate.
-             eapply typing.app_K.
-             eapply typing.app_K. }
-           destruct (declaration_apply_inv _ _ _ _ _ Hintro) as [R0 [D0 [HR0 [HD0 HC0]]]].
-           apply (HSv N R0 D0 HR0 HD0 n2 C E U T c x' w HC0 Happ Hc HU).
-           ++ intros m e' w' Hm; apply IH; lia.
-           ++ exact Hcx.
-        -- apply typing.app_stem_inv in Hconstruction.
-           pose proof (type_app_stem_structural_inv AI type_app _ _ _ Hplain Hconstruction) as ->.
-           assert (HA : abstract_case @ ('S2[G,F]) ==> Lf).
-           { unfold abstract_case; apply type_app_abstract_case_S_none; exact Hplain. }
-           pose proof (app_plain_inv AI _ _ _ HA Happ) as HD.
-           destruct (default_S_inv _ _ _ _ _ _ HD) as [VG [VF [HG [HF HR]]]].
-           apply (IH n _ _ (le_n n) H); eapply typing.infer_expression_fork.
-           ++ eapply typing.infer_expression_fork;
-                [apply typing.infer_expression_stem; exact Hg|
-                 apply typing.infer_expression_stem; exact Hargument|exact HG].
-           ++ eapply typing.infer_expression_fork;
-                [apply typing.infer_expression_stem; exact Hf|
-                 apply typing.infer_expression_stem; exact Hargument|exact HF].
-           ++ exact HR.
-      * (* triage[f0,f1,f2] @ v2 *)
-        destruct v2 as [|u|u1 u2].
-        -- inversion H; subst w.
-           destruct (triage_application_typing AI f0 f1 f2 Lf T Htyping)
-             as [X [Hx [HS|[HQ|[-> HC]]]]].
-           ++ destruct HS as [F0 [F1 [F2 [HF HC]]]].
-              exact (structural_triage_reduct_typing AI f0 f1 f2 F0 F1 F2 Lf X T HF Hx HC).
-           ++ exact (query_triage_reduct_typing AI f0 f1 f2 Lf T X HQ Hx).
-           ++ exact (children_reduct_typing AI f0 f1 f2 Lf X HC Hx).
-        -- apply (IH n _ _ (le_n n) H).
-           destruct (triage_application_typing AI f0 f1 f2 (Sm u) T Htyping)
-             as [X [Hx [HS|[HQ|[-> HC]]]]].
-           ++ destruct HS as [F0 [F1 [F2 [HF HC]]]].
-              exact (structural_triage_reduct_typing AI f0 f1 f2 F0 F1 F2 (Sm u) X T HF Hx HC).
-           ++ exact (query_triage_reduct_typing AI f0 f1 f2 (Sm u) T X HQ Hx).
-           ++ exact (children_reduct_typing AI f0 f1 f2 (Sm u) X HC Hx).
-        -- apply (IH n _ _ (le_n n) H).
-           destruct (triage_application_typing AI f0 f1 f2 (Fk u1 u2) T Htyping)
-             as [X [Hx [HS|[HQ|[-> HC]]]]].
-           ++ destruct HS as [F0 [F1 [F2 [HF HC]]]].
-              exact (structural_triage_reduct_typing AI f0 f1 f2 F0 F1 F2 (Fk u1 u2) X T HF Hx HC).
-           ++ exact (query_triage_reduct_typing AI f0 f1 f2 (Fk u1 u2) T X HQ Hx).
-           ++ exact (children_reduct_typing AI f0 f1 f2 (Fk u1 u2) X HC Hx).
-    + (* v1 @ (Fk c d) *)
-      destruct (eval_bounded n (Fk c d)) as [v2|] eqn:H1; [|discriminate]; rename H into H2.
-      apply (IH n _ _ (le_n n) H2).
-      destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-        as [T1 [T2 [He1 [He2 Happ]]]].
-      eapply typing.infer_expression_fork.
-      * exact He1.
-      * eapply typing.infer_expression_stem.
-        exact (IH n _ _ (le_n n) H1 T2 He2).
-      * exact Happ.
-  - (* (Fk a b) @ e2 *)
-    destruct (eval_bounded n (Fk a b)) as [v1|] eqn:H1; [|discriminate]; rename H into H2.
-    apply (IH n _ _ (le_n n) H2).
-    destruct (typing.infer_expression_fork_inv _ _ _ _ Htyping)
-      as [T1 [T2 [He1 [He2 Happ]]]].
-    eapply typing.infer_expression_fork.
-    + eapply typing.infer_expression_stem.
-      exact (IH n _ _ (le_n n) H1 T1 He1).
-    + exact He2.
-    + exact Happ.
+    [exact (IH m e w Hle H T HT)|]; clear HL Hm.
+  destruct e as [f u|d u]; cbn [eval_bounded eval_step] in H.
+  - destruct (has_type_ap_inv _ _ _ _ HT) as [F [U [Hf [Hu HA]]]]; clear HT.
+    destruct f as [|a|[|g|f0 f1] h].
+    + inv_out H; eapply leaf_app_typing; eassumption.
+    + inv_out H; eapply stem_app_typing; eassumption.
+    + inv_out H; eapply K_typing; eassumption.
+    + destruct (eval_bounded n (g @ u)) as [a|] eqn:E1; [|discriminate].
+      destruct (eval_bounded n (h @ u)) as [b|] eqn:E2; [|discriminate].
+      destruct (S_app_typing_inv AI g h u F U T Hf Hu HA) as
+        [[G [H' [VG [VH [Hg [Hh [HG [HH HR]]]]]]]]
+        |[c [C [N [E [-> [Hc [Hh [HI HE]]]]]]]]].
+      * (* untagged: the reduct (g u)(h u) *)
+        apply (IH n _ _ (le_n n) H); eapply has_type_ap;
+          [apply (IH n _ _ (le_n n) E1); eapply has_type_ap; eassumption
+          |apply (IH n _ _ (le_n n) E2); eapply has_type_ap; eassumption|exact HR].
+      * (* tagged: soundness for values at the carrier c *)
+        assert (a = c) as ->.
+        { destruct n; [discriminate|]; cbn in E1; congruence. }
+        destruct (declaration_apply_inv _ _ _ _ _ HI) as [R0 [D0 [HR0 [HD0 HC0]]]].
+        exact (HSv N R0 D0 HR0 HD0 n C E U T c b w HC0 HE Hc
+          (IH n _ _ (le_n n) E2 U (has_type_ap _ _ _ _ _ _ Hh Hu (tagged_part_type AI N U)))
+          IH H).
+    + pose proof (triage_application_typing AI f0 f1 h u F U T Hf Hu HA) as HR.
+      destruct u as [|x|x y].
+      * inv_out H; exact HR.
+      * exact (IH n _ _ (le_n n) H T HR).
+      * exact (IH n _ _ (le_n n) H T HR).
+  - destruct (eval_bounded n d) as [v|] eqn:E; [|discriminate].
+    destruct (has_type_apr_inv _ _ _ _ HT) as [D [U [Hd [Hu HA]]]].
+    apply (IH n _ _ (le_n n) H); eapply has_type_ap;
+      [exact (IH n _ _ (le_n n) E D Hd)|exact Hu|exact HA].
 Qed.
 
 End ValueSoundness.
 
 Theorem evaluation_preserves_typing : forall AI e v T,
   ontology_sound AI -> e ==> v ->
-  infer_expression AI @ e ==> Sm T -> infer AI @ v ==> Sm T.
+  has_type AI e T -> inf AI @ v ==> Sm T.
 Proof.
   intros AI e v T HS He HT.
   destruct (eval_bounded_complete _ _ He) as [n Hn].
@@ -1550,7 +1248,7 @@ Qed.
     ([plain_evaluation_preserves_typing]), with no bound. *)
 Theorem ept_by_typing : forall AI e v T,
   ontology_sound_by_typing AI -> e ==> v ->
-  infer_expression AI @ e ==> Sm T -> infer AI @ v ==> Sm T.
+  has_type AI e T -> inf AI @ v ==> Sm T.
 Proof.
   intros AI e v T HS He HT.
   exact (plain_evaluation_preserves_typing AI e v
@@ -1575,8 +1273,7 @@ Proof.
     as [f0 [f1 [-> _]]].
   pose proof (children_reduct_typing AI f0 f1 f2 v U Hc Hv) as HR.
   destruct n as [|n]; [discriminate|].
-  rewrite eval_bounded_unfold in Ht; unfold eval_bounded_step in Ht.
-  destruct v as [|x|x y].
+  destruct v as [|x|x y]; cbn [eval_bounded eval_step] in Ht.
   - inversion Ht; subst w; exact HR.
   - exact (He n _ _ ltac:(lia) Ht U HR).
   - exact (He n _ _ ltac:(lia) Ht U HR).
@@ -1636,8 +1333,7 @@ Proof.
     as [f0 [f1 [-> _]]].
   pose proof (query_triage_reduct_typing AI f0 f1 f2 v B U Hc Hv) as HR.
   destruct n as [|n]; [discriminate|].
-  rewrite eval_bounded_unfold in Ht; unfold eval_bounded_step in Ht.
-  destruct v as [|x|x y].
+  destruct v as [|x|x y]; cbn [eval_bounded eval_step] in Ht.
   - inversion Ht; subst w; exact HR.
   - exact (He n _ _ ltac:(lia) Ht B HR).
   - exact (He n _ _ ltac:(lia) Ht B HR).

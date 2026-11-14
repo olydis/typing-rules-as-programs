@@ -92,9 +92,11 @@ Lemma get_update_composition_inv : forall X B,
 Proof.
   intros X B H; unfold get_update_composition, get_update_composition_fields in H;
     cbn in H; invert_eval.
-  assert (Heq : equal @ v22 @r tagged_update ==> v0)
-    by (eapply eval_appl; eauto).
-  destruct (equal_spec _ _ _ Heq) as [[-> HE] | [-> HE]]; invert_eval.
+  match goal with
+  | H1 : equal @ ?r ==> ?w, H2 : ?w @ tagged_update ==> ?res |- _ =>
+      assert (Heq : equal @ r @r tagged_update ==> res) by (eapply eval_appl; eauto);
+      destruct (equal_spec _ _ _ Heq) as [[-> HE] | [-> HE]]; invert_eval
+  end.
   eapply get_composition_inv; eassumption.
 Qed.
 Local Opaque get_update_composition.
@@ -200,7 +202,7 @@ Proof.
   pose proof (update_type_mk_eval (Z (T 'C tagged_update))) as H2.
   pose proof (equal_eval (Sm ('Update))).
   pose proof (equal1_eq (Sm ('Update))).
-  destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
   unfold update_recursive_constructor; eexists; split; evaluate.
 Qed.
 Lemma update_recursive_constructor_inv : forall C k a E,
@@ -280,7 +282,7 @@ Proof.
  pose proof (proj2 (is_concrete_true N) HN).
  pose proof (get_wrap_payload_type_some AI N T HI).
  pose proof (equal1_eq (Sm (wrap_type T N))).
- destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+ destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
  unfold update_choice_constructor; unfold wrap_type, wrap_eliminator in *.
  eexists; split; run.
 Qed.
@@ -683,7 +685,7 @@ Lemma update_unfold : forall N f u v,
 Proof.
  intros N f u v H; unfold update, fix_update at 1; apply tagged_eval; apply Z_unfold.
  eapply eval_appl; [|exact H].
- eapply eval_c; eapply eval_appr;
+ eapply eval_c;
  [apply tagged_update_eval|apply body_eval].
 Qed.
 Lemma update_hit : forall N f p v,
@@ -792,9 +794,9 @@ Theorem abstract_update_preserves_typing : forall AI u x U y,
 Proof.
   intros AI u x U y HS Hu Hx HE.
   eapply evaluation_preserves_typing; eauto.
-  eapply infer_expression_fork.
-  - apply infer_expression_stem; exact Hu.
-  - apply infer_expression_stem; exact Hx.
+  has_type_intro.
+  - exact Hu.
+  - exact Hx.
   - apply type_app_Update.
 Qed.
 
@@ -1286,7 +1288,7 @@ Proof.
   intros f u v H; inv_out H.
   unfold fix_query at 1; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|eassumption].
-  eapply eval_c; eapply eval_appr.
+  eapply eval_c.
   - unfold tagged_query; evaluate.
   - eassumption.
 Qed.
@@ -1756,7 +1758,7 @@ Lemma ghost_guarded_unfold : forall N f u v,
 Proof.
   intros N f u v H; unfold ghost_guarded_update at 1, fix_update; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|exact H].
-  eapply eval_c; eapply eval_appr; [apply tagged_update_eval|].
+  eapply eval_c; [apply tagged_update_eval|].
   apply ghost_guarded_body_eval.
 Qed.
 Definition off_list u := pattern_matches list_pat u = false.

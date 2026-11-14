@@ -187,28 +187,17 @@ with run_head_wr := first [eassumption|apply equal1_neq;discriminate|apply equal
 Local Opaque equal equal1 get_tagname.
 Local Lemma update_eval_inv : forall e v, e ==> v ->
   match e with
-  | Lf => False
-  | Sm u => v = u
-  | Fk op arg =>
-    match op with
-    | Lf => False
-    | Fk a b => exists w, Fk a b ==> w /\ Fk (Sm w) arg ==> v
-    | Sm f =>
-      match arg with
-      | Lf => False
-      | Fk a b => exists w, Fk a b ==> w /\ f @ w ==> v
-      | Sm u =>
-        match f with
-        | Lf => v = Sm u
-        | Sm a => v = Fk a u
-        | Fk Lf a => v = a
-        | Fk (Sm g) h => Fk (g @ u) (h @ u) ==> v
-        | Fk (Fk f0 f1) f2 =>
-          (u = Lf /\ v = f0) \/
-          (exists x, u = Sm x /\ f1 @ x ==> v) \/
-          (exists x y, u = Fk x y /\ f2 @ x @r y ==> v)
-        end
-      end
+  | d @r u => exists w, d ==> w /\ w @ u ==> v
+  | f @ u =>
+    match f with
+    | Lf => v = Sm u
+    | Sm a => v = Fk a u
+    | Fk Lf a => v = a
+    | Fk (Sm g) h => exists a b, g @ u ==> a /\ h @ u ==> b /\ a @ b ==> v
+    | Fk (Fk f0 f1) f2 =>
+      (u = Lf /\ v = f0) \/
+      (exists x, u = Sm x /\ f1 @ x ==> v) \/
+      (exists x y, u = Fk x y /\ f2 @ x @r y ==> v)
     end
   end.
 Proof.
@@ -217,19 +206,16 @@ Qed.
 
 Local Ltac invert_update_eval :=
   match goal with
-  | H : eval (Sm _) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Fk _ _) _) _ |- _ =>
+  | H : eval (_ @r _) _ |- _ =>
       apply update_eval_inv in H; destruct H as [? [? ?]]
-  | H : eval (Fk (Sm _) (Fk _ _)) _ |- _ =>
-      apply update_eval_inv in H; destruct H as [? [? ?]]
-  | H : eval (Fk (Sm Lf) (Sm _)) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Sm (Sm _)) (Sm _)) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Sm (Fk Lf _)) (Sm _)) _ |- _ => apply update_eval_inv in H; subst
-  | H : eval (Fk (Sm (Fk (Sm _) _)) (Sm _)) _ |- _ => apply update_eval_inv in H
-  | H : eval (Fk (Sm (Fk (Fk _ _) _)) (Sm _)) _ |- _ =>
+  | H : eval (Lf @ _) _ |- _ => apply update_eval_inv in H; subst
+  | H : eval (Sm _ @ _) _ |- _ => apply update_eval_inv in H; subst
+  | H : eval (Fk Lf _ @ _) _ |- _ => apply update_eval_inv in H; subst
+  | H : eval (Fk (Sm _) _ @ _) _ |- _ =>
+      apply update_eval_inv in H; destruct H as [? [? [? [? ?]]]]
+  | H : eval (Fk (Fk _ _) _ @ _) _ |- _ =>
       apply update_eval_inv in H;
       destruct H as [[? ?]|[[? [? ?]]|[? [? [? ?]]]]]; subst
-  | H : eval (Fk Lf _) _ |- _ => apply update_eval_inv in H; contradiction
   | H : Sm _ = Sm _ |- _ => injection H; clear H; intros; subst
   | H : Fk _ _ = Fk _ _ |- _ => injection H; clear H; intros; subst
   end.
@@ -494,9 +480,9 @@ Lemma salary_here_preserves_typing : forall (AI : Decl) u U v,
 Proof.
  intros AI u U v HA HS HN HT Hu He; eapply evaluation_preserves_typing;
  [exact HA|exact He|].
- eapply infer_expression_fork;
- [apply infer_expression_stem; apply infer_salary_here; assumption|
-  apply infer_expression_stem; exact Hu|apply type_app_salary_here; [assumption|assumption|exists u; exact Hu]].
+ has_type_intro;
+ [apply infer_salary_here; assumption|
+  exact Hu|apply type_app_salary_here; [assumption|assumption|exists u; exact Hu]].
 Qed.
 
 (** ** Seek: a wrapped number for searching

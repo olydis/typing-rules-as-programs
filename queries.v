@@ -74,11 +74,11 @@ Proof. intros; apply type_app_abstract; apply query_eliminator_eval. Qed.
 Theorem generic_query_application : forall AI q B x U,
   infer AI @ q ==> Sm ('Query[B]) ->
   infer AI @ x ==> Sm U ->
-  infer_expression AI @ (q @ x) ==> Sm B.
+  has_type AI (q @ x) B.
 Proof.
-  intros AI q B x U Hq Hx; eapply infer_expression_fork.
-  - apply infer_expression_stem; exact Hq.
-  - apply infer_expression_stem; exact Hx.
+  intros AI q B x U Hq Hx; has_type_intro.
+  - exact Hq.
+  - exact Hx.
   - apply type_app_Query.
 Qed.
 
@@ -263,7 +263,7 @@ Proof.
   pose proof (query_handler_spec F0 F1 F2 Lf) as HH.
   unfold query_triage_fn; unfold query_handler_fn in *.
   destruct (_ && _)%bool;
-    repeat match goal with H : Fk (Fk _ _) _ ==> _ |- _ => inv_out H end;
+    repeat match goal with H : _ @r _ ==> _ |- _ => inv_out H end;
     unfold query_triage_case; qrun.
 Qed.
 Local Transparent query_handler.
@@ -300,10 +300,11 @@ Proof.
   destruct X as [|X|left right];
     unfold get_tagged_query, get_tagged_query_check in H; cbn in H;
     invert_eval.
-  assert (Hequal : equal @ right @r tagged_query ==> v0)
-    by (eapply eval_appl; eauto).
-  destruct (equal_spec _ _ _ Hequal)
-    as [[-> Heq] | [-> Hneq]].
+  match goal with
+  | H1 : equal @ right ==> ?w, H2 : ?w @ tagged_query ==> ?r |- _ =>
+      assert (Hequal : equal @ right @r tagged_query ==> r) by (eapply eval_appl; eauto);
+      destruct (equal_spec _ _ _ Hequal) as [[-> Heq] | [-> Hneq]]
+  end.
   - subst right; invert_eval.
   - invert_eval.
 Qed.
@@ -326,8 +327,8 @@ Lemma get_tagged_query_composition_inv : forall X D,
   X = D 'C tagged_query.
 Proof.
   intros X D H; unfold get_tagged_query_composition in H; invert_eval.
-  apply get_tagged_query_inv in H5; subst v0.
-  apply get_composition_inv in H4; exact H4.
+  match goal with H : _ |- _ => apply get_tagged_query_inv in H; subst end.
+  match goal with H : _ |- _ => apply get_composition_inv in H; exact H end.
 Qed.
 
 
@@ -405,7 +406,7 @@ Proof. intros; unfold abstractor_intro; evaluate. Qed.
 Lemma abstractor_at_eval : forall core a C v,
   core @ C @r a ==> v -> ('S2[core, 'K1 a]) @ C ==> v.
 Proof.
-  intros core a C v H; destruct (eval_pair_inv _ _ _ H) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  intros core a C v H; destruct (eval_appl_inv _ _ _ H) as [w [Hw Hw2]].
   repeat first [eassumption | progress evaluate].
 Qed.
 
@@ -431,7 +432,7 @@ Lemma clause_inv : forall p d C a E,
   (p @ C ==> Lf /\ d @ C @r a ==> Sm E).
 Proof.
   intros p d C a E Hf H.
-  destruct (eval_pair_inv _ _ _ H) as [W [c [HW [Hc Ha]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ H) as [W [HW Ha]].
   destruct (extend_inv _ _ _ _ HW) as [[k [Hk ->]]|[[HL Hd]|[l [r [Hl _]]]]].
   - left; eauto.
   - right; split; [exact HL|eapply eval_appl; eassumption].
@@ -530,7 +531,7 @@ Proof.
   pose proof (get_query_some F).
   pose proof (get_query_some V).
   pose proof (query_found_eval B).
-  destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
   unfold query_S_case.
   Local Transparent get_query get_S_fields.
   fold get_query get_S_fields.
@@ -612,10 +613,11 @@ Lemma query_diagonal_case_inv : forall C E,
   exists B, C = 'S2['Query['Query[B]],'I] /\ E = Sm B.
 Proof.
   intros C E H; unfold query_diagonal_case in H; invert_eval.
-  assert (HF : query_diagonal_fields @ v21 @r v22 ==> Sm E)
-    by (eapply eval_appl; eauto).
+  match goal with H1 : query_diagonal_fields @ ?x ==> ?w, H3 : ?w @ ?y ==> _ |- _ =>
+    assert (HF : query_diagonal_fields @ x @r y ==> Sm E) by (eapply eval_appl; eauto) end.
   apply query_diagonal_fields_inv in HF; destruct HF as [B [-> [-> ->]]].
-  apply get_S_fields_inv in H4; exists B; auto.
+  match goal with H : get_S_fields @ _ ==> _ |- _ => apply get_S_fields_inv in H end.
+  exists B; auto.
 Qed.
 Lemma query_diagonal_application : forall AI B U,
   type_app AI @ ('S2['Query['Query[B]],'I]) @r U ==> Sm B.
@@ -684,7 +686,7 @@ Proof.
   pose proof (query_found_eval B).
   pose proof (equal_eval (Sm ('Query[B]))).
   pose proof (equal1_eq (Sm ('Query[B]))).
-  destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
   unfold query_fix_case.
   Local Transparent get_query.
   fold get_query.
@@ -808,7 +810,7 @@ Proof.
   pose proof (proj2 (is_concrete_true N) HN).
   pose proof (get_wrap_payload_type_some AI N T HI).
   pose proof (equal1_eq (Sm B)).
-  destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
+  destruct (eval_appl_inv _ _ _ HA) as [w [Hw Hw2]].
   unfold choice_constructor, query_eliminator.
   unfold wrap_type, wrap_eliminator in *.
   eexists; split; run.
@@ -1435,11 +1437,11 @@ Opaque equal.
 Lemma size_application_typed : forall (AI : Decl) x X,
   supports_queries AI -> supports_number AI ->
   infer AI @ x ==> Sm X ->
-  infer_expression AI @ (size @ x) ==> Sm ('Nat).
+  has_type AI (size @ x) ('Nat).
 Proof.
-  intros AI x X Hq Hn Hx; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_size; assumption.
-  - apply infer_expression_stem; exact Hx.
+  intros AI x X Hq Hn Hx; has_type_intro.
+  - apply infer_size; assumption.
+  - exact Hx.
   - apply app_abstract; apply query_eliminator_eval.
 Qed.
 
@@ -1475,8 +1477,8 @@ Lemma size_unfold : forall x v,
   size @ x ==> v.
 Proof.
   intros x v H; unfold size at 1, fix_query; apply tagged_eval, Z_unfold.
-  eapply eval_op; [|exact H].
-  eapply eval_c; eapply eval_appr.
+  eapply eval_appl; [|exact H].
+  eapply eval_c.
   - unfold tagged_query, tagged_query_package; cbn; evaluate.
   - apply wait_eval; eapply eval_appl; [evaluate|].
     unfold size_stem, size_fork, size, fix_query.
@@ -1497,7 +1499,6 @@ Proof.
   intros q u v a b Hu Hv.
   pose proof (add_numerals a b) as HA.
   pose proof (succ_step_eval (numeral (a + b))) as HS.
-  destruct (eval_pair_inv _ _ _ HA) as [w [c [Hw [Hc Hw2]]]]; inv_out Hc.
   unfold size_fork; cbn.
   repeat first [eassumption | apply S_q_eval | apply K_q_eval
                | progress evaluate].
@@ -1988,7 +1989,7 @@ Proof.
       cbn; evaluate. }
   unfold typed_equal at 1, fix_query; apply tagged_eval; apply Z_unfold.
   eapply eval_appl; [|exact H].
-  apply eval_c; eapply eval_appr; [exact Htag|].
+  eapply eval_c; [exact Htag|].
   apply wait_eval; eapply eval_appl; [evaluate|apply equality_functional_eval].
 Qed.
 
@@ -2041,22 +2042,22 @@ Qed.
 Lemma equal_application_typed : forall (AI : Decl) x X,
   supports_queries AI -> supports_booleans AI ->
   infer AI @ x ==> Sm X ->
-  infer_expression AI @ (typed_equal @ x) ==> Sm ('Query['Bool]).
+  has_type AI (typed_equal @ x) ('Query['Bool]).
 Proof.
-  intros AI x X Hq Hb Hx; eapply infer_expression_fork.
-  - apply infer_expression_stem; apply infer_typed_equal; assumption.
-  - apply infer_expression_stem; exact Hx.
+  intros AI x X Hq Hb Hx; has_type_intro.
+  - apply infer_typed_equal; assumption.
+  - exact Hx.
   - apply app_abstract; apply query_eliminator_eval.
 Qed.
 
 Lemma equal_application2_typed : forall (AI : Decl) x X y Y,
   supports_queries AI -> supports_booleans AI ->
   infer AI @ x ==> Sm X -> infer AI @ y ==> Sm Y ->
-  infer_expression AI @ Fk (typed_equal @ x) (Sm y) ==> Sm ('Bool).
+  has_type AI (typed_equal @ x @r y) ('Bool).
 Proof.
-  intros AI x X y Y Hq Hb Hx Hy; eapply infer_expression_fork.
+  intros AI x X y Y Hq Hb Hx Hy; has_type_intro.
   - eapply equal_application_typed; eassumption.
-  - apply infer_expression_stem; exact Hy.
+  - exact Hy.
   - apply app_abstract; apply query_eliminator_eval.
 Qed.
 

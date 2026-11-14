@@ -34,10 +34,29 @@ The development has no `Admitted` proofs and no axioms. `Assumptions.v`,
 the last file built, runs `Print Assumptions` on every Theorem; each
 reports "Closed under the global context".
 
-Every Theorem of the paper is a Rocq Theorem of the same name, stated in
-the paper as proved here. Not every Rocq Theorem appears in the paper.
-Other results that the paper relies on are Lemmas, cited by name in the
-paper.
+Every Theorem of the paper is a Rocq Theorem of the same name. Not every
+Rocq Theorem appears in the paper. Other results that the paper relies on
+are Lemmas, cited by name in the paper.
+
+## Evaluation of applications
+
+The paper reads a tree as an expression: `Sm v` marks the value `v`, a fork
+applies one expression to another, and `e :: U` types an expression by the
+program `infer_expression`. Here evaluation applies values to values only.
+An application `f @ u` applies the value `f` to the value `u`, and
+`d @r u` applies the value of the application `d` to `u`; applications
+are not trees, and every argument is a value (`tree.v`). The type of an
+application, `has_type AI d T`, is type application of the types of the
+values it applies (`typing.v`). The paper's theorems about expressions
+are stated about applications: Theorems 3 to 5 say that evaluation of an
+application preserves its type, and the tools of "Towards Typed Tooling"
+act on the values an application applies (its operator for optimisation,
+all of them for patching).
+
+Snapshots of evaluation are computations held as data, so `steps.v` keeps
+the paper's encoding of computations as trees: `run` gives an encoded
+computation its meaning in terms of applications, and `infer_expression`
+types snapshots.
 
 ## Files
 
@@ -65,14 +84,13 @@ In build order, with the part of the paper each supports:
 | `paper_ontology.v` | A Sound Ontology |
 | `self_typing.v` | Concrete Types: self-typing, including `infer : infer` |
 | `customisation.v` | Querying a department; raising salaries |
-| `patching.v` | Patching a query program; patching expressions |
+| `patching.v` | Patching a query program; patching pending applications |
 | `optimisation.v` | Towards Typed Tooling: typed optimisation |
 | `steps.v` | Towards Typed Tooling: snapshots of evaluation |
 | `divergence.v` | Support: divergence and the truth-teller |
 | `specialise_equal.v` | Towards Typed Tooling: specialising equality, sizes |
 | `typed_mu.v` | Typed partial recursion on numbers |
 | `nat_search.v` | Introduction (Figure 1) and Updates: `nat_search` |
-| `values.v` | Support: the core on values and application; expressions derived. Not described in the paper |
 | `Assumptions.v` | `Print Assumptions` for every Theorem |
 
 ## Theorems of the paper

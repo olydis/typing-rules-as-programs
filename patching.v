@@ -1,11 +1,11 @@
-(** * Patching programs and expressions (paper: "Patching a query program", "Patching expressions").
+(** * Patching programs and pending applications (paper: "Patching a query program", "Patching expressions").
 
     Patching query programs: the lambda program
     [paid_at_least_57] and its update to [paid_at_least_58], the update of
     [paid_over_57] to [paid_over_58]
     ([salary_update_paid_over_57],
     [salary_update_paid_at_least_57]) and their typing; and
-    patching expressions
+    patching pending applications
     ([update_preserves_expression_typing]). *)
 
 
@@ -513,19 +513,6 @@ Proof.
   apply su_cell; [apply su_employee|].
   apply ghost_guarded_nil.
 Qed.
-(** The pending application [q57 @ d2025] is patched to [q58 @ d2026]. *)
-Lemma salary_update_pending_query :
-  salary_update @ (paid_over_57 @ department_example) ==>
-    paid_over_58 @ department_2026.
-Proof.
-  apply ghost_guarded_miss.
-  - reflexivity.
-  - intros g w Hbad; discriminate Hbad.
-  - intros p Hbad; discriminate Hbad.
-  - apply ghost_guarded_stem; exact salary_update_paid_over_57.
-  - apply ghost_guarded_stem; exact salary_update_department_2025.
-Qed.
-
 End TraversalExamples.
 
 (** Paper names for the company examples (specialisation.tex, updates.tex,
@@ -553,29 +540,21 @@ Definition employee_list :=
   'tagged[list_eliminator (wrap_type employee_fields employee_nm), list_nm].
 
 Lemma pending_query_typed :
-  infer_expression paper_ontology @ (paid_over_57 @ department_example) ==>
-    Sm employee_list.
+  has_type paper_ontology (paid_over_57 @ department_example) employee_list.
 Proof.
-  eapply query_expression_application_typing;
-    apply infer_expression_stem;
-    [exact all_paid_over_typed | exact all_department_typed].
+  eapply has_type_ap;
+    [exact all_paid_over_typed | exact all_department_typed | apply query_app_type].
 Qed.
 
-(** Read as a value, the pending query has the type
-    [Query[List[Employee]] @ Department] of its parts, and the update
-    [salary_update] applied to it preserves that type. *)
+(** The update [salary_update] applied to either part of the pending query
+    keeps the type of that part. *)
 Theorem salary_update_pending_query_typed :
-  infer_expression paper_ontology
-    @ (salary_update @ (paid_over_57 @ department_2025)) ==>
-    Sm (Fk (Sm ('Query['List['Employee]])) (Sm ('Department))).
+  has_type paper_ontology (salary_update @ paid_over_57) ('Query['List['Employee]]) /\
+  has_type paper_ontology (salary_update @ department_2025) ('Department).
 Proof.
-  eapply infer_expression_fork;
-    [apply infer_expression_stem; exact all_ghost_salary_update_typed
-    |apply infer_expression_stem|apply type_app_Update].
-  eapply infer_fork;
-    [apply infer_stem; exact all_paid_over_typed
-    |apply infer_stem; exact all_department_typed|].
-  apply app_stem, type_app_stem_structural; intros C N; discriminate.
+  split; (eapply has_type_ap; [exact all_ghost_salary_update_typed| |apply type_app_Update]).
+  - exact all_paid_over_typed.
+  - exact all_department_typed.
 Qed.
 
 
@@ -585,19 +564,12 @@ Unset Default Proof Using.
 (* Updating pending computations.                                     *)
 (**********************************************************************)
 
-(** An expression is also a tree, so a generic update can traverse it
-    before it is evaluated.  This file shows that such a patch preserves
-    expression typing, and that in the salary example patching a pending
-    query gives the same result as patching the query's result.
-
-    The argument rests on one observation.  The value type of a typable
-    expression tree mirrors its structure: a quoted value [Sm v] has type
-    [Sm V], and an application [Fk e1 e2] has type [Fk E1 E2].  Such a tree
-    of types is never tag-shaped, since a tag would need a leaf where every
-    typable expression has a stem or fork.  Expression typing is computed
-    from these value types alone, so any tree with the same value type has
-    the same expression type.  Value-level preservation for updates then
-    gives expression-level preservation. *)
+(** An update can patch an application before it is evaluated, by
+    patching its operator and its arguments.  This file shows that such a
+    patch preserves the type of the application, and that in the salary
+    example patching a pending query gives the same result as patching the
+    query's result.  The type of an application is computed from the types
+    of the values it applies, which updates preserve. *)
 
 From Stdlib Require Import String.
 From TreeTyping Require Import tree typing soundness booleans.
@@ -605,80 +577,28 @@ From TreeTyping Require Import functions queries booleans updates paper_ontology
 
 Set Default Proof Using "Type".
 
-(** * Value types of expression trees *)
+(** [patched u d d']: [d'] applies the patches by [u] of the values that
+    [d] applies. *)
+Inductive patched (u : Combination) : Application -> Application -> Prop :=
+| patched_ap : forall f x f' x',
+    u @ f ==> f' -> u @ x ==> x' -> patched u (f @ x) (f' @ x')
+| patched_apr : forall d x d' x',
+    patched u d d' -> u @ x ==> x' -> patched u (d @r x) (d' @r x').
 
-(** The shape of the value type of a typable expression: quoted values
-    give stems, applications give forks, and no leaf occurs. *)
-Fixpoint expression_type_shape (E : Combination) : Prop :=
-  match E with
-  | Lf => False
-  | Sm _ => True
-  | Fk E1 E2 => expression_type_shape E1 /\ expression_type_shape E2
-  end.
-
-(** A tag [S2[K1 C, S2[K, K1 N]]] has a leaf at the head of [K1 N], so an
-    application of such types is never tag-shaped. *)
-Lemma expression_type_untagged : forall E1 E2,
-  expression_type_shape E2 -> forall C N, Fk E1 E2 <> 'tagged[C,N].
-Proof.
-  intros E1 E2 H2 C N Heq; inversion Heq; subst; cbn in H2; tauto.
-Qed.
-
-(** The value type of a typable expression mirrors it, and determines its
-    expression type: any tree with the same value type has the same
-    expression type. *)
-Lemma expression_type_factors : forall AI e T,
-  infer_expression AI @ e ==> Sm T ->
-  exists E, expression_type_shape E /\ infer AI @ e ==> Sm E /\
-    forall e', infer AI @ e' ==> Sm E -> infer_expression AI @ e' ==> Sm T.
-Proof.
-  intros AI e; induction e as [|u _|e1 IH1 e2 IH2]; intros T H.
-  - pose proof (eval_deterministic _ _ H _ (infer_expression_leaf AI));
-      discriminate.
-  - apply infer_expression_stem_inv in H.
-    exists (Sm T); repeat split.
-    + apply infer_stem; exact H.
-    + intros e' He'.
-      destruct (infer_stem_result_inv AI e' T He') as [t [-> Ht]].
-      apply infer_expression_stem; exact Ht.
-  - destruct (infer_expression_fork_inv AI e1 e2 T H)
-      as [T1 [T2 [H1 [H2 Happ]]]].
-    destruct (IH1 T1 H1) as [E1 [S1 [V1 D1]]].
-    destruct (IH2 T2 H2) as [E2 [S2 [V2 D2]]].
-    exists (Fk E1 E2); repeat split; try assumption.
-    + eapply infer_fork; [exact V1|exact V2|].
-      apply app_stem; apply type_app_stem_structural.
-      apply expression_type_untagged; exact S2.
-    + intros e' He'; destruct e' as [|u|u1 u2].
-      * pose proof (eval_deterministic _ _ He' _ (infer_leaf AI));
-          discriminate.
-      * destruct (infer_stem_inv AI u _ He') as [U [HU _]]; discriminate.
-      * destruct (infer_fork_inv AI u1 u2 _ He') as [U1 [U2 [Hu1 [Hu2 Ha]]]].
-        apply app_stem_inv in Ha.
-        destruct (tagged_decide (Fk U1 U2)) as [[C [N Heq]]|Hplain].
-        -- inversion Heq; subst U1 U2.
-           destruct (type_app_stem_tagged_success_inv AI _ _ _ _ Ha)
-             as [E [_ HE]].
-           exfalso; eapply expression_type_untagged; [exact S2|exact HE].
-        -- pose proof (type_app_stem_structural_inv AI _ _ _ _ Hplain Ha)
-             as HR; inversion HR; subst U1 U2.
-           eapply infer_expression_fork; [apply D1|apply D2|]; eassumption.
-Qed.
-
-(** * Updates preserve expression typing *)
+(** * Updates preserve the typing of applications *)
 
 Theorem update_preserves_expression_typing : forall (AI : Decl) u e e' T,
   ontology_sound AI -> infer AI @ u ==> Sm ('Update) ->
-  infer_expression AI @ e ==> Sm T -> u @ e ==> e' ->
-  infer_expression AI @ e' ==> Sm T.
+  has_type AI e T -> patched u e e' -> has_type AI e' T.
 Proof.
-  intros AI u e e' T Hsound Hu He Hupd.
-  destruct (expression_type_factors AI e T He) as [E [_ [HE Hdet]]].
-  apply Hdet; eapply abstract_update_preserves_typing; eassumption.
+  intros AI u e e' T Hsound Hu He Hp; revert T He.
+  induction Hp; intros T He.
+  - destruct (has_type_ap_inv _ _ _ _ He) as [F [X [Hf [Hx HA]]]].
+    eapply has_type_ap; [| |exact HA]; eapply abstract_update_preserves_typing; eassumption.
+  - destruct (has_type_apr_inv _ _ _ _ He) as [D [X [Hd [Hx HA]]]].
+    eapply has_type_apr; [exact (IHHp D Hd)| |exact HA].
+    eapply abstract_update_preserves_typing; eassumption.
 Qed.
-
-(** * Patching a pending query *)
-
 
 (** * Patching with the ghost-aware salary update
 
@@ -687,13 +607,15 @@ Qed.
     minimum wage. Patching then running agrees with running then patching:
     r = [E(1,58),E(3,57)] and r+ = [E(1,59),E(3,58)]. *)
 Lemma ghost_pending_query_updated :
-  salary_update @ (paid_over_57 @ department_2025) ==>
-    paid_over_58 @ department_2026.
-Proof. exact salary_update_pending_query. Qed.
+  patched salary_update (paid_over_57 @ department_2025)
+    (paid_over_58 @ department_2026).
+Proof.
+  apply patched_ap; [exact salary_update_paid_over_57|exact salary_update_department_2025].
+Qed.
 
 Theorem patch_commutes_with_evaluation :
-  (salary_update @ (paid_over_57 @ department_2025) ==>
-     paid_over_58 @ department_2026 /\
+  (patched salary_update (paid_over_57 @ department_2025)
+     (paid_over_58 @ department_2026) /\
    paid_over_58 @ department_2026 ==> paid_58_in_2026) /\
   (paid_over_57 @ department_2025 ==> paid_57_in_2025 /\
    salary_update @ paid_57_in_2025 ==> paid_58_in_2026).
@@ -706,8 +628,7 @@ Proof.
 Qed.
 
 Lemma patched_query_typed :
-  infer_expression paper_ontology @
-    (paid_over_58 @ department_2026) ==> Sm employee_list.
+  has_type paper_ontology (paid_over_58 @ department_2026) employee_list.
 Proof.
   eapply update_preserves_expression_typing.
   - exact paper_ontology_sound.

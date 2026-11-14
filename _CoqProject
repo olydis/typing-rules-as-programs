@@ -43,7 +43,7 @@ paper_ontology.v
 self_typing.v
 # Queries and Updates: querying a department, raising salaries.
 customisation.v
-# Patching a query program; Towards Typed Tooling: patching expressions.
+# Patching a query program; Towards Typed Tooling: patching pending applications.
 patching.v
 # Towards Typed Tooling: typed optimisation.
 optimisation.v
@@ -57,8 +57,6 @@ specialise_equal.v
 typed_mu.v
 # Introduction (Figure 1) and Updates: the search operator nat_search.
 nat_search.v
-# Support: the core on values and application; expressions derived.
-values.v
 
 # Assumptions check for every Theorem (prints only).
 Assumptions.v

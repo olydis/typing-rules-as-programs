@@ -219,9 +219,8 @@ Lemma check_product_parameters_inv : forall X U,
 Proof.
   intros X U H; unfold check_product_parameters in H.
   invert_eval.
-  apply get_equal_parameters_inv in H5; subst v0.
-  apply get_product_parameters_inv in H4.
-  exact H4.
+  match goal with H : _ |- _ => apply get_equal_parameters_inv in H; subst end.
+  match goal with H : _ |- _ => apply get_product_parameters_inv in H; exact H end.
 Qed.
 
 Lemma type_app_fst_product : forall AI A B,
@@ -338,9 +337,8 @@ Lemma bool_product_matcher_inv : forall X U,
 Proof.
   intros X U H; unfold bool_product_matcher in H.
   invert_eval.
-  apply check_product_parameters_inv in H5; subst v0.
-  apply get_S_fields_inv in H4.
-  exact H4.
+  match goal with H : _ |- _ => apply check_product_parameters_inv in H; subst end.
+  match goal with H : _ |- _ => apply get_S_fields_inv in H; exact H end.
 Qed.
 
 (** The Boolean elimination program: [U '* U] gives [Sm U]. *)

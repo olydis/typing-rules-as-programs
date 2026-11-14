@@ -154,7 +154,7 @@ Proof. intros f t u r H; cbv in H |- *; invert_eval. Qed.
 Lemma lam_eval_inv : forall f d u v, lam f d @ u ==> v -> f @ u ==> v.
 Proof.
   intros f d u v H; unfold lam in H; apply tagged_unary_inv, wait_eval_inv in H.
-  destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hr]].
+  destruct (eval_appl_inv _ _ _ H) as [w [Hw Hr]].
   pose proof (eval_deterministic _ _ Hw _ (eval_k _ _)) as ->; exact Hr.
 Qed.
 Lemma swap_eval_inv : forall p n r, swap p @ n ==> r -> n @ p ==> r.
@@ -168,7 +168,7 @@ Qed.
 Lemma addition_fold_inv : forall a n r,
   addition @ a @r n ==> r -> n @ (a '* successor_function) ==> r.
 Proof.
-  intros a n r H; destruct (eval_app_r_inv _ _ _ H) as [w [Hw Hr]].
+  intros a n r H; destruct (eval_appl_inv _ _ _ H) as [w [Hw Hr]].
   pose proof (eval_deterministic _ _ Hw _ (addition_head a)) as ->.
   apply lam_eval_inv, swap_eval_inv in Hr; exact Hr.
 Qed.
@@ -573,7 +573,7 @@ Proof.
   eapply tagged_eval.
   eapply Z_unfold.
   eapply eval_appl.
-  - eapply eval_c; eapply eval_appr.
+  - eapply eval_c.
     + apply tagged_fun_eval.
     + unfold prec_functional, lam.
       eapply tagged_eval; eapply wait_eval.
@@ -593,7 +593,7 @@ Proof.
   eapply tagged_eval.
   eapply Z_unfold.
   eapply eval_appl.
-  - eapply eval_c; eapply eval_appr.
+  - eapply eval_c.
     + apply tagged_fun_eval.
     + unfold prec_functional, lam.
       eapply tagged_eval; eapply wait_eval.
@@ -616,14 +616,9 @@ Lemma prec_succ : forall base step k recursive_result result,
   prec @ base @r step @r succ (numeral k) ==> result.
 Proof.
   intros base step k recursive_result result Hrecursive Hstep.
-  invert_eval.
-  assert (Hhead : prec @ base @r step ==> v1)
-    by (eapply eval_appl; eauto).
-  pose proof (eval_deterministic _ _ Hhead _ (prec_eval base step)) as Heq.
-  subst v1.
-  eapply eval_appl.
-  - apply prec_eval.
-  - eapply prec2_succ; eauto.
+  destruct (eval_appl_inv _ _ _ Hrecursive) as [h [Hh Hr]].
+  pose proof (eval_deterministic _ _ Hh _ (prec_eval base step)) as ->.
+  eapply eval_appl; [apply prec_eval|eapply prec2_succ; eauto].
 Qed.
 
 (**********************************************************************)
@@ -985,7 +980,7 @@ Proof.
   eapply tagged_eval.
   eapply Z_unfold.
   eapply eval_appl.
-  - eapply eval_c; eapply eval_appr.
+  - eapply eval_c.
     + apply tagged_fun_eval.
     + unfold typed_minimisation_functional, lam.
       eapply tagged_eval; eapply wait_eval.
@@ -1008,7 +1003,7 @@ Proof.
   eapply tagged_eval.
   eapply Z_unfold.
   eapply eval_appl.
-  - eapply eval_c; eapply eval_appr.
+  - eapply eval_c.
     + apply tagged_fun_eval.
     + unfold typed_minimisation_functional, lam.
       eapply tagged_eval; eapply wait_eval.
@@ -1035,13 +1030,9 @@ Lemma minimisation_false : forall predicate n recursive_result,
   minimisation_fn @ predicate @r n ==> recursive_result.
 Proof.
   intros predicate n recursive_result Hpredicate Hrecursive.
-  invert_eval.
-  pose proof
-    (eval_deterministic _ _ H3 _ (minimisation_fn_eval predicate)) as Heq.
-  subst v1.
-  eapply eval_appl.
-  - apply minimisation_fn_eval.
-  - eapply minimisation2_false; eauto.
+  destruct (eval_appl_inv _ _ _ Hrecursive) as [h [Hh Hr]].
+  pose proof (eval_deterministic _ _ Hh _ (minimisation_fn_eval predicate)) as ->.
+  eapply eval_appl; [apply minimisation_fn_eval|eapply minimisation2_false; eauto].
 Qed.
 
 Opaque zero successor_function.
